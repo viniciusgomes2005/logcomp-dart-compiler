@@ -18,6 +18,9 @@ void calculator(String text){
             phrease.add(item);
         }
     }
+    if (phrease.length == 0){
+        throw Exception();
+    }
     int value = 0;
     String operator = "+";
     bool isOperator = true;
