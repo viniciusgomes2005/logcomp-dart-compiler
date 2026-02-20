@@ -20,7 +20,11 @@ void calculator(String text){
     String operator = "+";
     bool isOperator = true;
     print(phrease);
-    for (String item in phrease){
+    for (int i = 0; i < phrease.length; i++){
+        String item = phrease[i];
+        if (i == 0 && operators.contains(item)){
+            throw Exception();
+        }
         if(isOperator == operators.contains(item)){
             print("$item, ${isOperator.toString()}");
             throw Exception();
