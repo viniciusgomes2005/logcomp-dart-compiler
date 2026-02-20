@@ -4,7 +4,8 @@ void calculator(String text){
     List<String> operators = ["+","-"];
     for(int i = 0; i < text.length; i++){
         if(operators.contains(text[i])){
-            filtered_text += " ${text[i] }";
+            print("operator: ${text[i]}");
+            filtered_text += " ${text[i]} ";
         } else {
             filtered_text += text[i];
         }
@@ -12,6 +13,7 @@ void calculator(String text){
     List<String> wrong_phrease = filtered_text.split(" ");
     List<String> phrease = [];
     for (String item in wrong_phrease){
+        print( "item: $item");
         if (item.isNotEmpty){
             phrease.add(item);
         }
