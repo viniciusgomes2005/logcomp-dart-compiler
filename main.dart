@@ -53,7 +53,7 @@ class Lexer {
 
     final currentChar = source[position];
 
-    if (currentChar == "+" || currentChar == "-") {
+    if (currentChar == "+" || currentChar == "-" || currentChar == "^") {
       next = Token("OPERATOR", currentChar, position);
       position++;
       return;
@@ -77,7 +77,7 @@ class Lexer {
       position: position,
       expression: source,
       message:
-          "Invalid character '$currentChar' (ASCII ${currentChar.codeUnitAt(0)}). Expected: digits (0-9), operators (+, -), or spaces",
+          "Invalid character '$currentChar' (ASCII ${currentChar.codeUnitAt(0)}). Expected: digits (0-9), operators (+, -, ^), or spaces",
     );
   }
 }
@@ -130,7 +130,7 @@ class Parser {
           position: lexer.next.position,
           expression: lexer.source,
           message:
-              "Expected operator (+ or -), found '${lexer.next.value}' (${lexer.next.type})",
+              "Expected operator (+, -, or ^), found '${lexer.next.value}' (${lexer.next.type})",
         );
       }
 
@@ -155,6 +155,7 @@ class Parser {
       final term = int.parse(lexer.next.value);
       if (op == "+") value += term;
       if (op == "-") value -= term;
+      if (op == "^") value ^= term;
 
       lexer.selectToken();
     }
