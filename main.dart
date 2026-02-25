@@ -26,7 +26,7 @@ class Lexer {
     }
     if (position == 0 && (source[position] == "-" || source[position] == "+")) {
       throw Exception(
-        "Lexer Error at position $position: Expression cannot start with operator '${source[position]}'. "
+        "[Lexer] Error at position $position: Expression cannot start with operator '${source[position]}'. "
         "Expression: '$source'. "
         "Expected: A number or opening parenthesis.",
       );
@@ -40,7 +40,7 @@ class Lexer {
           (source[checkPos] == "+" || source[checkPos] == "-")) {
         String context = source.substring(0, position + 1);
         throw Exception(
-          "Lexer Error at position $position: Consecutive operators detected. "
+          "[Lexer] Error at position $position: Consecutive operators detected. "
           "Found '${source[checkPos]}' followed by '$current_char'. "
           "Context: '$context' <- HERE. "
           "Expected: A number between operators.",
@@ -76,7 +76,7 @@ class Lexer {
               " -> '$current_char' <- " +
               source.substring(position + 1);
     throw Exception(
-      "Lexer Error at position $position: Invalid character '$current_char' (ASCII ${current_char.codeUnitAt(0)}). "
+      "[Lexer] Error at position $position: Invalid character '$current_char' (ASCII ${current_char.codeUnitAt(0)}). "
       "Context: '$context'. "
       "Expected: Numbers (0-9), operators (+, -), or spaces.",
     );
@@ -100,7 +100,7 @@ class Parser {
       lexer.selectToken();
       if (lexer.next.type != "NUMBER") {
         throw Exception(
-          "Parser Error: Expected number after operator '$operator'. "
+          "[Parser] Error: Expected number after operator '$operator'. "
           "Found: ${lexer.next.type == "EOF" ? "end of expression" : "'${lexer.next.value}' (${lexer.next.type})"}. "
           "Position: ${lexer.position} in expression '${lexer.source}'. "
           "Expected: A valid number (e.g., 123, 45).",
