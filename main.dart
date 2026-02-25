@@ -1,122 +1,158 @@
+import 'dart:io';
+
 class Token {
   String type;
   String value;
-  Token(this.type, this.value);
+  int position;
+  Token(this.type, this.value, this.position);
+}
+
+class CompilerError implements Exception {
+  final String sourceTag;
+  final String code;
+  final String message;
+  final int position;
+  final String expression;
+
+  CompilerError({
+    required this.sourceTag,
+    required this.code,
+    required this.message,
+    required this.position,
+    required this.expression,
+  });
+
+  @override
+  String toString() {
+    return "[$sourceTag] $code at position $position: $message. Expression: '$expression'.";
+  }
 }
 
 class Lexer {
-  String source;
+  final String source;
   int position = 0;
   late Token next;
+
   Lexer(this.source) {
     selectToken();
   }
 
-  selectToken() {
+  void _skipSpaces() {
+    while (position < source.length && source[position] == " ") {
+      position++;
+    }
+  }
+
+  void selectToken() {
+    _skipSpaces();
+
     if (position >= source.length) {
-      next = Token("EOF", "");
+      next = Token("EOF", "", position);
       return;
     }
 
-    String current_char = source[position];
-    if (source[position] == " ") {
-      position++;
-      selectToken();
-      return;
-    }
-    if (position == 0 && (source[position] == "-" || source[position] == "+")) {
-      throw Exception(
-        "[Lexer] Error at position $position: Expression cannot start with operator '${source[position]}'. "
-        "Expression: '$source'. "
-        "Expected: A number or opening parenthesis.",
-      );
-    }
-    if (current_char == "+" || current_char == "-") {
-      int checkPos = position - 1;
-      while (checkPos >= 0 && source[checkPos] == " ") {
-        checkPos--;
-      }
-      if (checkPos >= 0 &&
-          (source[checkPos] == "+" || source[checkPos] == "-")) {
-        String context = source.substring(0, position + 1);
-        throw Exception(
-          "[Lexer] Error at position $position: Consecutive operators detected. "
-          "Found '${source[checkPos]}' followed by '$current_char'. "
-          "Context: '$context' <- HERE. "
-          "Expected: A number between operators.",
-        );
-      }
-      next = Token("OPERATOR", current_char);
+    final currentChar = source[position];
+
+    if (currentChar == "+" || currentChar == "-") {
+      next = Token("OPERATOR", currentChar, position);
       position++;
       return;
     }
-    if (current_char == " ") {
-      position++;
-      selectToken();
-      return;
-    }
-    if (int.tryParse(current_char) != null) {
-      String number = "";
+
+    if (int.tryParse(currentChar) != null) {
+      final start = position;
+      var number = "";
       while (position < source.length &&
           int.tryParse(source[position]) != null) {
         number += source[position];
         position++;
       }
-      next = Token("NUMBER", number);
+      next = Token("NUMBER", number, start);
       return;
     }
-    String context = source.length > 20
-        ? source.substring(0, position) +
-              " -> '$current_char' <- " +
-              source.substring(
-                position + 1,
-                (position + 10).clamp(0, source.length),
-              )
-        : source.substring(0, position) +
-              " -> '$current_char' <- " +
-              source.substring(position + 1);
-    throw Exception(
-      "[Lexer] Error at position $position: Invalid character '$current_char' (ASCII ${current_char.codeUnitAt(0)}). "
-      "Context: '$context'. "
-      "Expected: Numbers (0-9), operators (+, -), or spaces.",
+
+    throw CompilerError(
+      sourceTag: "Lexer",
+      code: "E_LEX_INVALID_CHAR",
+      position: position,
+      expression: source,
+      message:
+          "Invalid character '$currentChar' (ASCII ${currentChar.codeUnitAt(0)}). Expected: digits (0-9), operators (+, -), or spaces",
     );
   }
 }
 
 class Parser {
-  Lexer lexer;
-  Parser(this.lexer);
+  late Lexer lexer;
 
   int parseExpression() {
-    int value = lexer.next.type == "NUMBER" ? int.parse(lexer.next.value) : 0;
-    if (lexer.next.type == "NUMBER") {
-      lexer.selectToken();
+    if (lexer.next.type == "OPERATOR") {
+      throw CompilerError(
+        sourceTag: "Parser",
+        code: "E_PAR_STARTS_WITH_OPERATOR",
+        position: lexer.next.position,
+        expression: lexer.source,
+        message: "Expression cannot start with operator '${lexer.next.value}'",
+      );
     }
+
+    int value = 0;
+
     if (lexer.next.type == "EOF") {
       return value;
     }
-    while (lexer.next.type == "OPERATOR") {
-      String operator = lexer.next.value;
-      lexer.selectToken();
-      if (lexer.next.type != "NUMBER") {
-        throw Exception(
-          "[Parser] Error: Expected number after operator '$operator'. "
-          "Found: ${lexer.next.type == "EOF" ? "end of expression" : "'${lexer.next.value}' (${lexer.next.type})"}. "
-          "Position: ${lexer.position} in expression '${lexer.source}'. "
-          "Expected: A valid number (e.g., 123, 45).",
+
+    if (lexer.next.type != "NUMBER") {
+      throw CompilerError(
+        sourceTag: "Parser",
+        code: "E_PAR_EXPECTED_NUMBER",
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected a number, found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+
+    value = int.parse(lexer.next.value);
+    lexer.selectToken();
+
+    while (lexer.next.type != "EOF") {
+      if (lexer.next.type != "OPERATOR") {
+        throw CompilerError(
+          sourceTag: "Parser",
+          code: "E_PAR_EXPECTED_OPERATOR",
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected operator (+ or -), found '${lexer.next.value}' (${lexer.next.type})",
         );
       }
-      int term = int.parse(lexer.next.value);
-      switch (operator) {
-        case "+":
-          value += term;
-          break;
-        case "-":
-          value -= term;
-          break;
+
+      final op = lexer.next.value;
+      final opPos = lexer.next.position;
+      lexer.selectToken();
+
+      if (lexer.next.type != "NUMBER") {
+        final found = lexer.next.type == "EOF"
+            ? "end of expression"
+            : "'${lexer.next.value}' (${lexer.next.type})";
+
+        throw CompilerError(
+          sourceTag: "Parser",
+          code: "E_PAR_EXPECTED_NUMBER_AFTER_OPERATOR",
+          position: opPos,
+          expression: lexer.source,
+          message: "Expected number after operator '$op', found $found",
+        );
       }
+
+      final term = int.parse(lexer.next.value);
+      if (op == "+") value += term;
+      if (op == "-") value -= term;
+
       lexer.selectToken();
     }
+
     return value;
   }
 
@@ -129,8 +165,20 @@ class Parser {
 void main(List<String> args) {
   if (args.isEmpty) {
     print("Use: dart run main.dart 10 + 5 - 3");
+    exitCode = 64;
     return;
   }
-  Parser parser = Parser(Lexer(""));
-  print(parser.run(args.join(" ")));
+
+  final code = args.join(" ");
+  final parser = Parser();
+
+  try {
+    final result = parser.run(code);
+    print(result);
+  } on CompilerError catch (e) {
+    print(e.toString());
+  } catch (e) {
+    print("[Internal] E_INTERNAL: ${e.toString()}");
+    exitCode = 1;
+  }
 }
