@@ -25,7 +25,11 @@ class Lexer {
       return;
     }
     if (position == 0 && (source[position] == "-" || source[position] == "+")) {
-      throw Exception("Expression cannot start with an operator");
+      throw Exception(
+        "Lexer Error at position $position: Expression cannot start with operator '${source[position]}'. "
+        "Expression: '$source'. "
+        "Expected: A number or opening parenthesis.",
+      );
     }
     if (current_char == "+" || current_char == "-") {
       int checkPos = position - 1;
@@ -34,7 +38,13 @@ class Lexer {
       }
       if (checkPos >= 0 &&
           (source[checkPos] == "+" || source[checkPos] == "-")) {
-        throw Exception("Cannot have consecutive operators");
+        String context = source.substring(0, position + 1);
+        throw Exception(
+          "Lexer Error at position $position: Consecutive operators detected. "
+          "Found '${source[checkPos]}' followed by '$current_char'. "
+          "Context: '$context' <- HERE. "
+          "Expected: A number between operators.",
+        );
       }
       next = Token("OPERATOR", current_char);
       position++;
@@ -55,7 +65,21 @@ class Lexer {
       next = Token("NUMBER", number);
       return;
     }
-    throw Exception("Invalid character: $current_char");
+    String context = source.length > 20
+        ? source.substring(0, position) +
+              " -> '$current_char' <- " +
+              source.substring(
+                position + 1,
+                (position + 10).clamp(0, source.length),
+              )
+        : source.substring(0, position) +
+              " -> '$current_char' <- " +
+              source.substring(position + 1);
+    throw Exception(
+      "Lexer Error at position $position: Invalid character '$current_char' (ASCII ${current_char.codeUnitAt(0)}). "
+      "Context: '$context'. "
+      "Expected: Numbers (0-9), operators (+, -), or spaces.",
+    );
   }
 }
 
@@ -75,7 +99,12 @@ class Parser {
       String operator = lexer.next.value;
       lexer.selectToken();
       if (lexer.next.type != "NUMBER") {
-        throw Exception("Expected number after operator");
+        throw Exception(
+          "Parser Error: Expected number after operator '$operator'. "
+          "Found: ${lexer.next.type == "EOF" ? "end of expression" : "'${lexer.next.value}' (${lexer.next.type})"}. "
+          "Position: ${lexer.position} in expression '${lexer.source}'. "
+          "Expected: A valid number (e.g., 123, 45).",
+        );
       }
       int term = int.parse(lexer.next.value);
       switch (operator) {
