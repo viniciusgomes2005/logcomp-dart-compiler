@@ -164,9 +164,8 @@ class Parser {
 
 void main(List<String> args) {
   if (args.isEmpty) {
-    print("Use: dart run main.dart 10 + 5 - 3");
-    exitCode = 64;
-    return;
+    stdout.writeln("Use: dart run main.dart 10 + 5 - 3");
+    exit(64);
   }
 
   final code = args.join(" ");
@@ -174,11 +173,12 @@ void main(List<String> args) {
 
   try {
     final result = parser.run(code);
-    print(result);
+    stdout.writeln(result);
   } on CompilerError catch (e) {
-    print(e.toString());
+    stderr.writeln(e.toString());
+    exit(1);
   } catch (e) {
-    print("[Internal] E_INTERNAL: ${e.toString()}");
-    exitCode = 1;
+    stderr.writeln("[Internal] E_INTERNAL: ${e.toString()}");
+    exit(1);
   }
 }
