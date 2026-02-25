@@ -1,55 +1,100 @@
+class Token {
+  String type;
+  String value;
+  Token(this.type, this.value);
+}
 
-void calculator(String text){
-    String filtered_text = "";
-    List<String> operators = ["+","-"];
-    for(int i = 0; i < text.length; i++){
-        if(operators.contains(text[i])){
-            filtered_text += " ${text[i]} ";
-        } else {
-            filtered_text += text[i];
-        }
-    }
-    List<String> wrong_phrease = filtered_text.split(" ");
-    List<String> phrease = [];
-    for (String item in wrong_phrease){
-        if (item.isNotEmpty){
-            phrease.add(item);
-        }
-    }
-    if (phrease.length == 0){
-        throw Exception();
-    }
-    int value = 0;
-    String operator = "+";
-    bool isOperator = true;
-    for (int i = 0; i < phrease.length; i++){
-        String item = phrease[i];
-        if (i == 0 && operators.contains(item)){
-            throw Exception();
-        }
-        if(isOperator == operators.contains(item)){
-            throw Exception();
-        }
+class Lexer {
+  String source;
+  int position = 0;
+  late Token next;
+  Lexer(this.source) {
+    selectToken();
+  }
 
-        if(phrease.last == item && operators.contains(item)){
-            throw Exception();
-        }
-        isOperator = operators.contains(item);
-        if (isOperator){
-
-            operator = item;
-        } 
-        else{
-            switch(operator){ 
-                case "+":
-                    value+=int.parse(item);
-                    break;
-                case "-":
-                    value-=int.parse(item);
-            }
-        }
+  selectToken() {
+    if (position >= source.length) {
+      next = Token("EOF", "");
+      return;
     }
-    print(value);
+
+    String current_char = source[position];
+    if (source[position] == " ") {
+      position++;
+      selectToken();
+      return;
+    }
+    if (position == 0 && (source[position] == "-" || source[position] == "+")) {
+      throw Exception("Expression cannot start with an operator");
+    }
+    if (current_char == "+" || current_char == "-") {
+      int checkPos = position - 1;
+      while (checkPos >= 0 && source[checkPos] == " ") {
+        checkPos--;
+      }
+      if (checkPos >= 0 &&
+          (source[checkPos] == "+" || source[checkPos] == "-")) {
+        throw Exception("Cannot have consecutive operators");
+      }
+      next = Token("OPERATOR", current_char);
+      position++;
+      return;
+    }
+    if (current_char == " ") {
+      position++;
+      selectToken();
+      return;
+    }
+    if (int.tryParse(current_char) != null) {
+      String number = "";
+      while (position < source.length &&
+          int.tryParse(source[position]) != null) {
+        number += source[position];
+        position++;
+      }
+      next = Token("NUMBER", number);
+      return;
+    }
+    throw Exception("Invalid character: $current_char");
+  }
+}
+
+class Parser {
+  Lexer lexer;
+  Parser(this.lexer);
+
+  int parseExpression() {
+    int value = lexer.next.type == "NUMBER" ? int.parse(lexer.next.value) : 0;
+    if (lexer.next.type == "NUMBER") {
+      lexer.selectToken();
+    }
+    if (lexer.next.type == "EOF") {
+      return value;
+    }
+    while (lexer.next.type == "OPERATOR") {
+      String operator = lexer.next.value;
+      lexer.selectToken();
+      if (lexer.next.type != "NUMBER") {
+        throw Exception("Expected number after operator");
+      }
+      int term = int.parse(lexer.next.value);
+      switch (operator) {
+        case "+":
+          value += term;
+          break;
+        case "-":
+          value -= term;
+          break;
+      }
+      lexer.selectToken();
+    }
+    return value;
+  }
+
+  int run(String code) {
+    lexer = Lexer(code);
+    return parseExpression();
+  }
 }
 
 void main(List<String> args) {
@@ -57,5 +102,6 @@ void main(List<String> args) {
     print("Use: dart run main.dart 10 + 5 - 3");
     return;
   }
-  calculator(args.join(" "));
+  Parser parser = Parser(Lexer(""));
+  print(parser.run(args.join(" ")));
 }
