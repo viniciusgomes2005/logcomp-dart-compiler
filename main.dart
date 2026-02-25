@@ -99,7 +99,13 @@ class Parser {
     int value = 0;
 
     if (lexer.next.type == "EOF") {
-      return value;
+      throw CompilerError(
+        sourceTag: "Parser",
+        code: "E_PAR_EMPTY_EXPRESSION",
+        position: 0,
+        expression: lexer.source,
+        message: "Empty expression is not allowed. Expected a number",
+      );
     }
 
     if (lexer.next.type != "NUMBER") {
@@ -169,6 +175,13 @@ void main(List<String> args) {
   }
 
   final code = args.join(" ");
+  if (code.trim().isEmpty) {
+    stderr.writeln(
+      "[Parser] E_PAR_EMPTY_EXPRESSION at position 0: Empty expression is not allowed. Expected a number. Expression: '$code'.",
+    );
+    exit(1);
+  }
+
   final parser = Parser();
 
   try {
