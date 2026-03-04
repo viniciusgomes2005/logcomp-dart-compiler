@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 
 class Token {
   String type;
@@ -72,6 +73,11 @@ class Lexer {
       }
       // * / ( )
       if (currentChar == "*"){
+        if (position + 1 < source.length && source[position + 1] == "*") {
+          next = Token("POWER", "**", position);
+          position += 2;
+          return;
+        }
         next = Token("MULT", currentChar, position);
         position++;
         return;
@@ -158,15 +164,26 @@ class Parser {
   }
 
   int parseFactor() {
+    int value = parseAtom();
+    
+    while (lexer.next.type == "POWER") {
+      lexer.selectToken();
+      final exponent = parseFactor(); // Right-associative
+      value = pow(value, exponent).toInt();
+    }
+    return value;
+  }
+
+  int parseAtom() {
 
       if (lexer.next.type == "MINUS") {
         lexer.selectToken();
-        return -parseFactor();
+        return -parseAtom();
       }
 
       if (lexer.next.type == "PLUS") {
         lexer.selectToken();
-        return parseFactor();
+        return parseAtom();
       }
 
       if (lexer.next.type == "OPEN_PAR") {
