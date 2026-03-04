@@ -109,7 +109,7 @@ class Lexer {
       position: position,
       expression: source,
       message:
-          "Invalid character '$currentChar' (ASCII ${currentChar.codeUnitAt(0)}). Expected: digits (0-9), operators (+, -, ^), or spaces",
+          "Invalid character '$currentChar' (ASCII ${currentChar.codeUnitAt(0)}). Expected: digits (0-9), operators (+, -, *, /, ^), parentheses, or spaces",
     );
   }
 }
@@ -186,9 +186,19 @@ class Parser {
         return value;
       }
       
-      final value = int.parse(lexer.next.value);
-      lexer.selectToken();
-      return value;
+      if (lexer.next.type == "INT") {
+        final value = int.parse(lexer.next.value);
+        lexer.selectToken();
+        return value;
+      }
+
+      throw CompilerError(
+        sourceTag: "Parser",
+        code: "E_PAR_EXPECTED_FACTOR",
+        position: lexer.next.position,
+        expression: lexer.source,
+        message: "Expected number, sign (+/-), or '(', found '${lexer.next.value}' (${lexer.next.type})",
+      );
   }
 
   int run(String code) {
