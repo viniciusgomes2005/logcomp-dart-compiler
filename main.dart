@@ -52,12 +52,30 @@ class Lexer {
     }
 
     final currentChar = source[position];
+ 
+    // if (currentChar == "+" || currentChar == "-" || currentChar == "^") {
+    //   next = Token("OPERATOR", currentChar, position);
+    //   position++;
+    //   return;
+    // }
+  
+      if (currentChar == "+"){
+        next = Token("PLUS", currentChar, position);
+        position++;
+        return;
+      }
 
-    if (currentChar == "+" || currentChar == "-" || currentChar == "^") {
-      next = Token("OPERATOR", currentChar, position);
-      position++;
-      return;
-    }
+      if (currentChar == "-"){
+        next = Token("MINUS", currentChar, position);
+        position++;
+        return;
+      }
+    
+      if (currentChar == "^"){
+        next = Token("XOR", currentChar, position);
+        position++;
+        return;
+      }
 
     if (int.tryParse(currentChar) != null) {
       final start = position;
@@ -67,7 +85,7 @@ class Lexer {
         number += source[position];
         position++;
       }
-      next = Token("NUMBER", number, start);
+      next = Token("INT", number, start);
       return;
     }
 
@@ -86,7 +104,7 @@ class Parser {
   late Lexer lexer;
 
   int parseExpression() {
-    if (lexer.next.type == "OPERATOR") {
+    if (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
       throw CompilerError(
         sourceTag: "Parser",
         code: "E_PAR_STARTS_WITH_OPERATOR",
@@ -95,7 +113,6 @@ class Parser {
         message: "Expression cannot start with operator '${lexer.next.value}'",
       );
     }
-
     int value = 0;
 
     if (lexer.next.type == "EOF") {
@@ -108,7 +125,7 @@ class Parser {
       );
     }
 
-    if (lexer.next.type != "NUMBER") {
+    if (lexer.next.type != "INT") {
       throw CompilerError(
         sourceTag: "Parser",
         code: "E_PAR_EXPECTED_NUMBER",
@@ -123,7 +140,7 @@ class Parser {
     lexer.selectToken();
 
     while (lexer.next.type != "EOF") {
-      if (lexer.next.type != "OPERATOR") {
+       if (lexer.next.type != "PLUS" && lexer.next.type != "MINUS" && lexer.next.type != "XOR") {
         throw CompilerError(
           sourceTag: "Parser",
           code: "E_PAR_EXPECTED_OPERATOR",
@@ -133,12 +150,11 @@ class Parser {
               "Expected operator (+, -, or ^), found '${lexer.next.value}' (${lexer.next.type})",
         );
       }
-
       final op = lexer.next.value;
       final opPos = lexer.next.position;
       lexer.selectToken();
 
-      if (lexer.next.type != "NUMBER") {
+      if (lexer.next.type != "INT") {
         final found = lexer.next.type == "EOF"
             ? "end of expression"
             : "'${lexer.next.value}' (${lexer.next.type})";
