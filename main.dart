@@ -52,13 +52,7 @@ class Lexer {
     }
 
     final currentChar = source[position];
- 
-    // if (currentChar == "+" || currentChar == "-" || currentChar == "^") {
-    //   next = Token("OPERATOR", currentChar, position);
-    //   position++;
-    //   return;
-    // }
-  
+
       if (currentChar == "+"){
         next = Token("PLUS", currentChar, position);
         position++;
@@ -177,6 +171,56 @@ class Parser {
     }
 
     return value;
+  }
+
+  int parseTerm() {
+    if (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
+      throw CompilerError(
+        sourceTag: "Parser",
+        code: "E_PAR_UNEXPECTED_OPERATOR",
+        position: lexer.next.position,
+        expression: lexer.source,
+        message: "Unexpected operator '${lexer.next.value}' in term",
+      );
+    }
+    if (lexer.next.type != "INT") {
+      throw CompilerError(
+        sourceTag: "Parser",
+        code: "E_PAR_EXPECTED_NUMBER_IN_TERM",
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected a number in term, found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+    final value = int.parse(lexer.next.value);
+    lexer.selectToken();
+    return value;
+  }
+
+  int parseFactor() {
+      if (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
+        throw CompilerError(
+          sourceTag: "Parser",
+          code: "E_PAR_UNEXPECTED_OPERATOR",
+          position: lexer.next.position,
+          expression: lexer.source,
+          message: "Unexpected operator '${lexer.next.value}' in factor",
+        );
+      }
+      if (lexer.next.type != "INT") {
+        throw CompilerError(
+          sourceTag: "Parser",
+          code: "E_PAR_EXPECTED_NUMBER_IN_FACTOR",
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected a number in factor, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      final value = int.parse(lexer.next.value);
+      lexer.selectToken();
+      return value;
   }
 
   int run(String code) {
