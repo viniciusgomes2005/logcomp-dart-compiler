@@ -203,7 +203,17 @@ class Parser {
 
   int run(String code) {
     lexer = Lexer(code);
-    return parseExpression();
+    final result =  parseExpression();
+    if (lexer.next.type != "EOF") {
+      throw CompilerError(
+        sourceTag: "Parser",
+        code: "E_PAR_UNEXPECTED_TOKEN",
+        position: lexer.next.position,
+        expression: lexer.source,
+        message: "Unexpected token '${lexer.next.value}' (${lexer.next.type}) after end of expression",
+      );
+    }
+    return result;
   }
 }
 
