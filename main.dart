@@ -70,7 +70,27 @@ class Lexer {
         position++;
         return;
       }
-
+      // * / ( )
+      if (currentChar == "*"){
+        next = Token("MULT", currentChar, position);
+        position++;
+        return;
+      }
+      if (currentChar == "/"){
+        next = Token("DIV", currentChar, position);
+        position++;
+        return;
+      }
+      if (currentChar == "("){
+        next = Token("OPEN_PAR", currentChar, position);
+        position++;
+        return;
+      }
+      if (currentChar == ")"){
+        next = Token("CLOSE_PAR", currentChar, position);
+        position++;
+        return;
+      }
     if (int.tryParse(currentChar) != null) {
       final start = position;
       var number = "";
@@ -98,126 +118,74 @@ class Parser {
   late Lexer lexer;
 
   int parseExpression() {
-    if (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
-      throw CompilerError(
-        sourceTag: "Parser",
-        code: "E_PAR_STARTS_WITH_OPERATOR",
-        position: lexer.next.position,
-        expression: lexer.source,
-        message: "Expression cannot start with operator '${lexer.next.value}'",
-      );
-    }
-    int value = 0;
-
-    if (lexer.next.type == "EOF") {
-      throw CompilerError(
-        sourceTag: "Parser",
-        code: "E_PAR_EMPTY_EXPRESSION",
-        position: 0,
-        expression: lexer.source,
-        message: "Empty expression is not allowed. Expected a number",
-      );
-    }
-
-    if (lexer.next.type != "INT") {
-      throw CompilerError(
-        sourceTag: "Parser",
-        code: "E_PAR_EXPECTED_NUMBER",
-        position: lexer.next.position,
-        expression: lexer.source,
-        message:
-            "Expected a number, found '${lexer.next.value}' (${lexer.next.type})",
-      );
-    }
-
-    value = int.parse(lexer.next.value);
-    lexer.selectToken();
-
-    while (lexer.next.type != "EOF") {
-       if (lexer.next.type != "PLUS" && lexer.next.type != "MINUS" && lexer.next.type != "XOR") {
-        throw CompilerError(
-          sourceTag: "Parser",
-          code: "E_PAR_EXPECTED_OPERATOR",
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected operator (+, -, or ^), found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
+    int value = parseTerm();
+    
+    while (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
       final op = lexer.next.value;
-      final opPos = lexer.next.position;
       lexer.selectToken();
-
-      if (lexer.next.type != "INT") {
-        final found = lexer.next.type == "EOF"
-            ? "end of expression"
-            : "'${lexer.next.value}' (${lexer.next.type})";
-
-        throw CompilerError(
-          sourceTag: "Parser",
-          code: "E_PAR_EXPECTED_NUMBER_AFTER_OPERATOR",
-          position: opPos,
-          expression: lexer.source,
-          message: "Expected number after operator '$op', found $found",
-        );
-      }
-
-      final term = int.parse(lexer.next.value);
+      final term = parseTerm();
       if (op == "+") value += term;
       if (op == "-") value -= term;
       if (op == "^") value ^= term;
 
-      lexer.selectToken();
     }
-
     return value;
   }
 
   int parseTerm() {
-    if (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
-      throw CompilerError(
-        sourceTag: "Parser",
-        code: "E_PAR_UNEXPECTED_OPERATOR",
-        position: lexer.next.position,
-        expression: lexer.source,
-        message: "Unexpected operator '${lexer.next.value}' in term",
-      );
+    int value = parseFactor();
+    
+    while (lexer.next.type == "MULT" || lexer.next.type == "DIV") {
+      final op = lexer.next.value;
+      final opPos = lexer.next.position;
+      lexer.selectToken();
+      final term = parseFactor();
+      if (op == "*") value *= term;
+      if (op == "/") {
+        if (term == 0) {
+          throw CompilerError(
+            sourceTag: "Parser",
+            code: "E_PAR_DIVISION_BY_ZERO",
+            position: opPos,
+            expression: lexer.source,
+            message: "Division by zero is not allowed",
+          );
+        }
+        value ~/= term;
+      }
     }
-    if (lexer.next.type != "INT") {
-      throw CompilerError(
-        sourceTag: "Parser",
-        code: "E_PAR_EXPECTED_NUMBER_IN_TERM",
-        position: lexer.next.position,
-        expression: lexer.source,
-        message:
-            "Expected a number in term, found '${lexer.next.value}' (${lexer.next.type})",
-      );
-    }
-    final value = int.parse(lexer.next.value);
-    lexer.selectToken();
     return value;
   }
 
   int parseFactor() {
-      if (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
-        throw CompilerError(
-          sourceTag: "Parser",
-          code: "E_PAR_UNEXPECTED_OPERATOR",
-          position: lexer.next.position,
-          expression: lexer.source,
-          message: "Unexpected operator '${lexer.next.value}' in factor",
-        );
+
+      if (lexer.next.type == "MINUS") {
+        lexer.selectToken();
+        return -parseFactor();
       }
-      if (lexer.next.type != "INT") {
-        throw CompilerError(
-          sourceTag: "Parser",
-          code: "E_PAR_EXPECTED_NUMBER_IN_FACTOR",
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected a number in factor, found '${lexer.next.value}' (${lexer.next.type})",
-        );
+
+      if (lexer.next.type == "PLUS") {
+        lexer.selectToken();
+        return parseFactor();
       }
+
+      if (lexer.next.type == "OPEN_PAR") {
+        lexer.selectToken();
+        final value = parseExpression();
+        if (lexer.next.type != "CLOSE_PAR") {
+          throw CompilerError(
+            sourceTag: "Parser",
+            code: "E_PAR_UNMATCHED_OPEN_PAREN",
+            position: lexer.next.position,
+            expression: lexer.source,
+            message:
+                "Expected closing parenthesis ')', found '${lexer.next.value}' (${lexer.next.type})",
+          );
+        }
+        lexer.selectToken();
+        return value;
+      }
+      
       final value = int.parse(lexer.next.value);
       lexer.selectToken();
       return value;
