@@ -164,58 +164,61 @@ class Parser {
   }
 
   int parseFactor() {
-    int value = parseAtom();
+    if (lexer.next.type == "MINUS") {
+      lexer.selectToken();
+      return -parseFactor();
+    }
+
+    if (lexer.next.type == "PLUS") {
+      lexer.selectToken();
+      return parseFactor();
+    }
+
+    return parsePower();
+  }
+
+  int parsePower() {
+    int value = parsePrimary();
     
     while (lexer.next.type == "POWER") {
       lexer.selectToken();
-      final exponent = parseFactor(); // Right-associative
+      final exponent = parseFactor(); // Right-associative, allows unary in exponent
       value = pow(value, exponent).toInt();
     }
     return value;
   }
 
-  int parseAtom() {
-
-      if (lexer.next.type == "MINUS") {
-        lexer.selectToken();
-        return -parseAtom();
+  int parsePrimary() {
+    if (lexer.next.type == "OPEN_PAR") {
+      lexer.selectToken();
+      final value = parseExpression();
+      if (lexer.next.type != "CLOSE_PAR") {
+        throw CompilerError(
+          sourceTag: "Parser",
+          code: "E_PAR_UNMATCHED_OPEN_PAREN",
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected closing parenthesis ')', found '${lexer.next.value}' (${lexer.next.type})",
+        );
       }
+      lexer.selectToken();
+      return value;
+    }
+    
+    if (lexer.next.type == "INT") {
+      final value = int.parse(lexer.next.value);
+      lexer.selectToken();
+      return value;
+    }
 
-      if (lexer.next.type == "PLUS") {
-        lexer.selectToken();
-        return parseAtom();
-      }
-
-      if (lexer.next.type == "OPEN_PAR") {
-        lexer.selectToken();
-        final value = parseExpression();
-        if (lexer.next.type != "CLOSE_PAR") {
-          throw CompilerError(
-            sourceTag: "Parser",
-            code: "E_PAR_UNMATCHED_OPEN_PAREN",
-            position: lexer.next.position,
-            expression: lexer.source,
-            message:
-                "Expected closing parenthesis ')', found '${lexer.next.value}' (${lexer.next.type})",
-          );
-        }
-        lexer.selectToken();
-        return value;
-      }
-      
-      if (lexer.next.type == "INT") {
-        final value = int.parse(lexer.next.value);
-        lexer.selectToken();
-        return value;
-      }
-
-      throw CompilerError(
-        sourceTag: "Parser",
-        code: "E_PAR_EXPECTED_FACTOR",
-        position: lexer.next.position,
-        expression: lexer.source,
-        message: "Expected number, sign (+/-), or '(', found '${lexer.next.value}' (${lexer.next.type})",
-      );
+    throw CompilerError(
+      sourceTag: "Parser",
+      code: "E_PAR_EXPECTED_FACTOR",
+      position: lexer.next.position,
+      expression: lexer.source,
+      message: "Expected number or '(', found '${lexer.next.value}' (${lexer.next.type})",
+    );
   }
 
   int run(String code) {
