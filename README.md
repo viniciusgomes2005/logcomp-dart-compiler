@@ -42,7 +42,7 @@ flowchart TD
 
 ## EBNF:
 ```ebnf
-EXPRESSION = TERM, { ("+" | "-" | "^"), TERM } ;
+EXPRESSION = TERM, { ("+" | "-"), TERM } ;
 TERM = FACTOR, { ("*" | "/"), FACTOR } ;
 FACTOR = ("+" | "-"), FACTOR | "(", EXPRESSION, ")" | NUMBER ;
 NUMBER = DIGIT, {DIGIT} ;
