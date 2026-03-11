@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math';
 
 class Token {
   String type;
@@ -210,113 +209,87 @@ class Lexer {
 class Parser {
   late Lexer lexer;
 
-  int parseExpression() {
-    int value = parseTerm();
-    
-    while (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
+  Node parseExpression() {
+    Node node = parseTerm();
+
+    while (lexer.next.type == "PLUS" ||
+        lexer.next.type == "MINUS" ||
+        lexer.next.type == "XOR") {
       final op = lexer.next.value;
       lexer.selectToken();
-      final term = parseTerm();
-      if (op == "+") value += term;
-      if (op == "-") value -= term;
-      if (op == "^") value ^= term;
-
+      node = BinOp(op, node, parseTerm());
     }
-    return value;
+    return node;
   }
 
-  int parseTerm() {
-    int value = parseFactor();
-    
+  Node parseTerm() {
+    Node node = parseFactor();
+
     while (lexer.next.type == "MULT" || lexer.next.type == "DIV") {
-      final op = lexer.next.value; 
+      final op = lexer.next.value;
       lexer.selectToken();
-      final term = parseFactor();
-      if (op == "*") value *= term;
-      if (op == "/") {
-        if (term == 0) {
-          throw CompilerError(
-            sourceTag: "Parser",
-            code: "E_PAR_DIVISION_BY_ZERO",
-            position: opPos,
-            expression: lexer.source,
-            message: "Division by zero is not allowed",
-          );
-        }
-        value ~/= term;
-      }
+      node = BinOp(op, node, parseFactor());
     }
-    return value;
+    return node;
   }
 
-  int parseFactor() {
+  Node parseFactor() {
     if (lexer.next.type == "MINUS") {
+      final op = lexer.next.value;
       lexer.selectToken();
-      return -parseFactor();
+      return UnOp(op, parseFactor());
     }
 
     if (lexer.next.type == "PLUS") {
+      final op = lexer.next.value;
       lexer.selectToken();
-      return parseFactor();
+      return UnOp(op, parseFactor());
     }
 
-    return parsePower();
-  }
-
-  int parsePower() {
-    int value = parsePrimary();
-    
-    while (lexer.next.type == "POWER") {
+    if (lexer.next.type == "OPEN_PAR") {
       lexer.selectToken();
-      final exponent = parseFactor(); // Right-associative, allows unary in exponent
-      value = pow(value, exponent).toInt();
+      Node node = parseExpression();
+      if (lexer.next.type != "CLOSE_PAR") {
+        throw CompilerError(
+          sourceTag: "Parser",
+          code: "E_PAR_UNMATCHED_OPEN_PAREN",
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected closing parenthesis ')', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+      while (lexer.next.type == "FACT") {
+        lexer.selectToken();
+        node = UnOp("!", node);
+      }
+      return node;
     }
-    return value;
-  }
 
-      if (lexer.next.type == "OPEN_PAR") {
+    if (lexer.next.type == "INT") {
+      Node node = IntVal(int.parse(lexer.next.value));
+      lexer.selectToken();
+      while (lexer.next.type == "FACT") {
         lexer.selectToken();
-        Node node = parseExpression();
-        if (lexer.next.type != "CLOSE_PAR") {
-          throw CompilerError(
-            sourceTag: "Parser",
-            code: "E_PAR_UNMATCHED_OPEN_PAREN",
-            position: lexer.next.position,
-            expression: lexer.source,
-            message:
-                "Expected closing parenthesis ')', found '${lexer.next.value}' (${lexer.next.type})",
-          );
-        }
-        lexer.selectToken();
-        while (lexer.next.type == "FACT") {
-          lexer.selectToken();
-          node = UnOp("!", node);
-        }
-        return node;
+        node = UnOp("!", node);
       }
-      
-      if (lexer.next.type == "INT") {
-        Node node = IntVal(int.parse(lexer.next.value));
-        lexer.selectToken();
-        while (lexer.next.type == "FACT") {
-          lexer.selectToken();
-          node = UnOp("!", node);
-        }
-        return node;
-      }
+      return node;
+    }
 
     throw CompilerError(
       sourceTag: "Parser",
       code: "E_PAR_EXPECTED_FACTOR",
       position: lexer.next.position,
       expression: lexer.source,
-      message: "Expected number or '(', found '${lexer.next.value}' (${lexer.next.type})",
+      message:
+          "Expected number, sign (+/-), or '(', found '${lexer.next.value}' (${lexer.next.type})",
     );
   }
 
   int run(String code) {
     lexer = Lexer(code);
-    final result =  parseExpression();
+    final root = parseExpression();
     if (lexer.next.type != "EOF") {
       throw CompilerError(
         sourceTag: "Parser",
@@ -326,7 +299,7 @@ class Parser {
         message: "Unexpected token '${lexer.next.value}' (${lexer.next.type}) after end of expression",
       );
     }
-    return result;
+    return root.evaluate();
   }
 }
 
@@ -349,6 +322,9 @@ void main(List<String> args) {
   try {
     final result = parser.run(code);
     stdout.writeln(result);
+  } on SemanticError catch (e) {
+    stderr.writeln(e.toString());
+    exit(1);
   } on CompilerError catch (e) {
     stderr.writeln(e.toString());
     exit(1);
