@@ -7,6 +7,74 @@ class Token {
   Token(this.type, this.value, this.position);
 }
 
+class Node {
+  void evaluate() {}
+}
+
+class IntVal extends Node {
+  int value;
+  IntVal(this.value);
+
+  @override
+  void evaluate() => value;
+}
+
+class UnOp extends Node {
+  String op;
+  dynamic operand;
+  UnOp(this.op, this.operand);
+
+  @override
+  void evaluate() {
+    final operandValue = operand.evaluate();
+    switch (op) {
+      case "-":
+        return -operandValue;
+      default:
+        throw CompilerError(
+          sourceTag: "UnOp",
+          code: "E_UNOP_INVALID_OPERATOR",
+          position: 0,
+          expression: "",
+          message: "Invalid unary operator '$op'",
+        );
+    }
+  }
+}
+
+class BinOp extends Node {
+  String op;
+  dynamic left;
+  dynamic right;
+  BinOp(this.op, this.left, this.right);
+
+  @override
+  void evaluate() {
+    final leftValue = left.evaluate();
+    final rightValue = right.evaluate();
+    switch (op) {
+      case "+":
+        return leftValue + rightValue;
+      case "-":
+        return leftValue - rightValue;
+      case "*":
+        return leftValue * rightValue;
+      case "/":
+        return leftValue ~/ rightValue; // Integer division
+      case "^":
+        return leftValue ^ rightValue;
+      default:
+        throw CompilerError(
+          sourceTag: "BinOp",
+          code: "E_BINOP_INVALID_OPERATOR",
+          position: 0,
+          expression: "",
+          message: "Invalid binary operator '$op'",
+        );
+    }
+  }
+}
+
 class CompilerError implements Exception {
   final String sourceTag;
   final String code;

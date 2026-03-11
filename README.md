@@ -7,18 +7,31 @@ This repository is monitored by Compiler Tester for automatic compilation status
 ## Diagrama Sintático
 
 ```mermaid
-flowchart LR
-    Start(( )) --> Number1[NUMBER]
-    Number1 --> Op{+ or - or ^?}
-    Op -->|Yes| Number2[NUMBER]
-    Number2 --> Op
-    Op -->|No| End(( ))
+flowchart TD
+    Start((Start)) --> Expr[EXPRESSION]
+    Expr --> ExprLoop{"+ | - | ^ ?"}
+    ExprLoop -->|sim| TermInExpr[TERM]
+    TermInExpr --> ExprLoop
+    ExprLoop -->|não| End((EOF))
+
+    Expr --> Term[TERM]
+    Term --> TermLoop{"* | / ?"}
+    TermLoop -->|sim| FactorInTerm[FACTOR]
+    FactorInTerm --> TermLoop
+    TermLoop -->|não| ReturnTerm[retorna TERM]
+
+    Term --> Factor[FACTOR]
+    Factor --> Unary{"+ ou - ?"}
+    Unary -->|sim| FactorUnary[FACTOR]
+    Unary -->|não| GroupOrInt{"( EXPRESSION ) ou INT"}
+    GroupOrInt --> ReturnFactor[retorna FACTOR]
 ```
 
 **Descrição:**
-- A expressão **inicia** com um `NUMBER` (número inteiro)
-- Seguido por **zero ou mais** pares de: `OPERATOR` (+ ou - ou ^) + `NUMBER`
-- Termina quando encontra `EOF` (fim da entrada)
+- `EXPRESSION` começa por `TERM` e aceita repetições com `+`, `-` ou `^`
+- `TERM` começa por `FACTOR` e aceita repetições com `*` ou `/`
+- `FACTOR` pode ser: operador unário (`+` ou `-`) aplicado a `FACTOR`, parênteses `(` `EXPRESSION` `)`, ou `INT`
+- A análise termina quando encontra `EOF` (fim da entrada)
 
 **Exemplos válidos:**
 - `1+2`
@@ -29,7 +42,7 @@ flowchart LR
 
 ## EBNF:
 ```ebnf
-EXPRESSION = TERM, { ("+" | "-"), TERM } ;
+EXPRESSION = TERM, { ("+" | "-" | "^"), TERM } ;
 TERM = FACTOR, { ("*" | "/"), FACTOR } ;
 FACTOR = ("+" | "-"), FACTOR | "(", EXPRESSION, ")" | NUMBER ;
 NUMBER = DIGIT, {DIGIT} ;
