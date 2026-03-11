@@ -8,6 +8,88 @@ class Token {
   Token(this.type, this.value, this.position);
 }
 
+abstract class Node {
+  final dynamic value;
+  final List<Node> children;
+
+  Node(this.value, [List<Node>? children]) : children = children ?? [];
+
+  int evaluate();
+}
+
+class IntVal extends Node {
+  IntVal(int value) : super(value);
+
+  @override
+  int evaluate() => value as int;
+}
+
+class UnOp extends Node {
+  UnOp(String op, Node operand) : super(op, [operand]);
+
+  int _factorial(int n) {
+    var result = 1;
+    for (var i = 2; i <= n; i++) {
+      result *= i;
+    }
+    return result;
+  }
+
+  @override
+  int evaluate() {
+    final operandValue = children[0].evaluate();
+    switch (value) {
+      case "+":
+        return operandValue;
+      case "-":
+        return -operandValue;
+      case "!":
+        if (operandValue < 0) {
+          throw SemanticError("Factorial is only defined for non-negative integers");
+        }
+        return _factorial(operandValue);
+      default:
+        throw SemanticError("Invalid unary operator '$value'");
+    }
+  }
+}
+
+class BinOp extends Node {
+  BinOp(String op, Node left, Node right) : super(op, [left, right]);
+
+  @override
+  int evaluate() {
+    final leftValue = children[0].evaluate();
+    final rightValue = children[1].evaluate();
+    switch (value) {
+      case "+":
+        return leftValue + rightValue;
+      case "-":
+        return leftValue - rightValue;
+      case "*":
+        return leftValue * rightValue;
+      case "/":
+        if (rightValue == 0) {
+          throw SemanticError("Division by zero is not allowed");
+        }
+        return leftValue ~/ rightValue;
+      case "^":
+        return leftValue ^ rightValue;
+      default:
+        throw SemanticError("Invalid binary operator '$value'");
+    }
+  }
+}
+
+class SemanticError implements Exception {
+  final String message;
+
+  SemanticError(this.message);
+
+  @override
+  String toString() => "[Semantic] $message";
+}
+
 class CompilerError implements Exception {
   final String sourceTag;
   final String code;
@@ -97,6 +179,11 @@ class Lexer {
         position++;
         return;
       }
+      if (currentChar == "!"){
+        next = Token("FACT", currentChar, position);
+        position++;
+        return;
+      }
     if (int.tryParse(currentChar) != null) {
       final start = position;
       var number = "";
@@ -115,7 +202,7 @@ class Lexer {
       position: position,
       expression: source,
       message:
-          "Invalid character '$currentChar' (ASCII ${currentChar.codeUnitAt(0)}). Expected: digits (0-9), operators (+, -, *, /, ^), parentheses, or spaces",
+          "Invalid character '$currentChar' (ASCII ${currentChar.codeUnitAt(0)}). Expected: digits (0-9), operators (+, -, *, /, ^, !), parentheses, or spaces",
     );
   }
 }
@@ -142,8 +229,7 @@ class Parser {
     int value = parseFactor();
     
     while (lexer.next.type == "MULT" || lexer.next.type == "DIV") {
-      final op = lexer.next.value;
-      final opPos = lexer.next.position;
+      final op = lexer.next.value; 
       lexer.selectToken();
       final term = parseFactor();
       if (op == "*") value *= term;
@@ -188,29 +274,36 @@ class Parser {
     return value;
   }
 
-  int parsePrimary() {
-    if (lexer.next.type == "OPEN_PAR") {
-      lexer.selectToken();
-      final value = parseExpression();
-      if (lexer.next.type != "CLOSE_PAR") {
-        throw CompilerError(
-          sourceTag: "Parser",
-          code: "E_PAR_UNMATCHED_OPEN_PAREN",
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected closing parenthesis ')', found '${lexer.next.value}' (${lexer.next.type})",
-        );
+      if (lexer.next.type == "OPEN_PAR") {
+        lexer.selectToken();
+        Node node = parseExpression();
+        if (lexer.next.type != "CLOSE_PAR") {
+          throw CompilerError(
+            sourceTag: "Parser",
+            code: "E_PAR_UNMATCHED_OPEN_PAREN",
+            position: lexer.next.position,
+            expression: lexer.source,
+            message:
+                "Expected closing parenthesis ')', found '${lexer.next.value}' (${lexer.next.type})",
+          );
+        }
+        lexer.selectToken();
+        while (lexer.next.type == "FACT") {
+          lexer.selectToken();
+          node = UnOp("!", node);
+        }
+        return node;
       }
-      lexer.selectToken();
-      return value;
-    }
-    
-    if (lexer.next.type == "INT") {
-      final value = int.parse(lexer.next.value);
-      lexer.selectToken();
-      return value;
-    }
+      
+      if (lexer.next.type == "INT") {
+        Node node = IntVal(int.parse(lexer.next.value));
+        lexer.selectToken();
+        while (lexer.next.type == "FACT") {
+          lexer.selectToken();
+          node = UnOp("!", node);
+        }
+        return node;
+      }
 
     throw CompilerError(
       sourceTag: "Parser",
