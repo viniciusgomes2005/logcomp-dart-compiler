@@ -7,52 +7,47 @@ class Token {
   Token(this.type, this.value, this.position);
 }
 
-class Node {
-  void evaluate() {}
+abstract class Node {
+  final dynamic value;
+  final List<Node> children;
+
+  Node(this.value, [List<Node>? children]) : children = children ?? [];
+
+  int evaluate();
 }
 
 class IntVal extends Node {
-  int value;
-  IntVal(this.value);
+  IntVal(int value) : super(value);
 
   @override
-  void evaluate() => value;
+  int evaluate() => value as int;
 }
 
 class UnOp extends Node {
-  String op;
-  dynamic operand;
-  UnOp(this.op, this.operand);
+  UnOp(String op, Node operand) : super(op, [operand]);
 
   @override
-  void evaluate() {
-    final operandValue = operand.evaluate();
-    switch (op) {
+  int evaluate() {
+    final operandValue = children[0].evaluate();
+    switch (value) {
+      case "+":
+        return operandValue;
       case "-":
         return -operandValue;
       default:
-        throw CompilerError(
-          sourceTag: "UnOp",
-          code: "E_UNOP_INVALID_OPERATOR",
-          position: 0,
-          expression: "",
-          message: "Invalid unary operator '$op'",
-        );
+        throw SemanticError("Invalid unary operator '$value'");
     }
   }
 }
 
 class BinOp extends Node {
-  String op;
-  dynamic left;
-  dynamic right;
-  BinOp(this.op, this.left, this.right);
+  BinOp(String op, Node left, Node right) : super(op, [left, right]);
 
   @override
-  void evaluate() {
-    final leftValue = left.evaluate();
-    final rightValue = right.evaluate();
-    switch (op) {
+  int evaluate() {
+    final leftValue = children[0].evaluate();
+    final rightValue = children[1].evaluate();
+    switch (value) {
       case "+":
         return leftValue + rightValue;
       case "-":
@@ -60,19 +55,25 @@ class BinOp extends Node {
       case "*":
         return leftValue * rightValue;
       case "/":
-        return leftValue ~/ rightValue; // Integer division
+        if (rightValue == 0) {
+          throw SemanticError("Division by zero is not allowed");
+        }
+        return leftValue ~/ rightValue;
       case "^":
         return leftValue ^ rightValue;
       default:
-        throw CompilerError(
-          sourceTag: "BinOp",
-          code: "E_BINOP_INVALID_OPERATOR",
-          position: 0,
-          expression: "",
-          message: "Invalid binary operator '$op'",
-        );
+        throw SemanticError("Invalid binary operator '$value'");
     }
   }
+}
+
+class SemanticError implements Exception {
+  final String message;
+
+  SemanticError(this.message);
+
+  @override
+  String toString() => "[Semantic] $message";
 }
 
 class CompilerError implements Exception {
@@ -185,56 +186,40 @@ class Lexer {
 class Parser {
   late Lexer lexer;
 
-  int parseExpression() {
-    int value = parseTerm();
+  Node parseExpression() {
+    Node node = parseTerm();
     
     while (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
       final op = lexer.next.value;
       lexer.selectToken();
-      final term = parseTerm();
-      if (op == "+") value += term;
-      if (op == "-") value -= term;
-      if (op == "^") value ^= term;
-
+      node = BinOp(op, node, parseTerm());
     }
-    return value;
+    return node;
   }
 
-  int parseTerm() {
-    int value = parseFactor();
+  Node parseTerm() {
+    Node node = parseFactor();
     
     while (lexer.next.type == "MULT" || lexer.next.type == "DIV") {
       final op = lexer.next.value;
-      final opPos = lexer.next.position;
       lexer.selectToken();
-      final term = parseFactor();
-      if (op == "*") value *= term;
-      if (op == "/") {
-        if (term == 0) {
-          throw CompilerError(
-            sourceTag: "Parser",
-            code: "E_PAR_DIVISION_BY_ZERO",
-            position: opPos,
-            expression: lexer.source,
-            message: "Division by zero is not allowed",
-          );
-        }
-        value ~/= term;
-      }
+      node = BinOp(op, node, parseFactor());
     }
-    return value;
+    return node;
   }
 
-  int parseFactor() {
+  Node parseFactor() {
 
       if (lexer.next.type == "MINUS") {
+        final op = lexer.next.value;
         lexer.selectToken();
-        return -parseFactor();
+        return UnOp(op, parseFactor());
       }
 
       if (lexer.next.type == "PLUS") {
+        final op = lexer.next.value;
         lexer.selectToken();
-        return parseFactor();
+        return UnOp(op, parseFactor());
       }
 
       if (lexer.next.type == "OPEN_PAR") {
@@ -257,7 +242,7 @@ class Parser {
       if (lexer.next.type == "INT") {
         final value = int.parse(lexer.next.value);
         lexer.selectToken();
-        return value;
+        return IntVal(value);
       }
 
       throw CompilerError(
@@ -271,7 +256,7 @@ class Parser {
 
   int run(String code) {
     lexer = Lexer(code);
-    final result =  parseExpression();
+    final root = parseExpression();
     if (lexer.next.type != "EOF") {
       throw CompilerError(
         sourceTag: "Parser",
@@ -281,7 +266,7 @@ class Parser {
         message: "Unexpected token '${lexer.next.value}' (${lexer.next.type}) after end of expression",
       );
     }
-    return result;
+    return root.evaluate();
   }
 }
 
@@ -304,6 +289,9 @@ void main(List<String> args) {
   try {
     final result = parser.run(code);
     stdout.writeln(result);
+  } on SemanticError catch (e) {
+    stderr.writeln(e.toString());
+    exit(1);
   } on CompilerError catch (e) {
     stderr.writeln(e.toString());
     exit(1);
