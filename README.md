@@ -7,24 +7,17 @@ This repository is monitored by Compiler Tester for automatic compilation status
 ## Diagrama Sintático
 
 ```mermaid
-flowchart TD
-    Start((Start)) --> Expr[EXPRESSION]
-    Expr --> ExprLoop{"+ | - | ^ ?"}
-    ExprLoop -->|sim| TermInExpr[TERM]
-    TermInExpr --> ExprLoop
-    ExprLoop -->|não| End((EOF))
+flowchart TB
+    N1(( ))
+    N2(( ))
+    N3(( ))
+    N4(( ))
+    N5(( ))
 
-    Expr --> Term[TERM]
-    Term --> TermLoop{"* | / ?"}
-    TermLoop -->|sim| FactorInTerm[FACTOR]
-    FactorInTerm --> TermLoop
-    TermLoop -->|não| ReturnTerm[retorna TERM]
-
-    Term --> Factor[FACTOR]
-    Factor --> Unary{"+ ou - ?"}
-    Unary -->|sim| FactorUnary[FACTOR]
-    Unary -->|não| GroupOrInt{"( EXPRESSION ) ou INT"}
-    GroupOrInt --> ReturnFactor[retorna FACTOR]
+    N1 --- N2
+    N1 --- N3
+    N3 --- N4
+    N4 --- N5
 ```
 
 **Descrição:**
