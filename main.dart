@@ -105,13 +105,15 @@ class Print extends Node {
 }
 
 class Assignment extends Node {
-  Assignment(String variableName, Node expression)
+  final bool immutable;
+
+  Assignment(String variableName, Node expression, {this.immutable = false})
     : super(variableName, [expression]);
 
   @override
   int evaluate(SymbolTable st) {
     final resolved = children[0].evaluate(st);
-    st.define(value, resolved);
+    st.define(value as String, resolved, immutable: immutable);
     return resolved;
   }
 }
@@ -167,26 +169,76 @@ class CompilerError implements Exception {
 }
 
 class Prepro {
+  static String _applyConstants(String input, Map<String, String> constants) {
+    var result = input;
+    final keys = constants.keys.toList()
+      ..sort((a, b) => b.length.compareTo(a.length));
+
+    for (final key in keys) {
+      final value = constants[key]!;
+      result = result.replaceAll(RegExp('\\b${RegExp.escape(key)}\\b'), value);
+    }
+
+    return result;
+  }
+
   static String filter(String code) {
     final withoutComments = code.replaceAll(
       RegExp(r'--.*$', multiLine: true),
       '',
     );
 
-    if (withoutComments.isEmpty) {
+    final constants = <String, String>{};
+    final processedLines = <String>[];
+
+    for (final line in withoutComments.split('\n')) {
+      final constMatch = RegExp(
+        r'^\s*const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(.+?)\s*$',
+      ).firstMatch(line);
+
+      if (constMatch != null) {
+        final name = constMatch.group(1)!;
+        final rawValue = constMatch.group(2)!;
+
+        if (constants.containsKey(name)) {
+          throw CompilerError(
+            sourceTag: 'Prepro',
+            code: 'E_PREPRO_DUPLICATE_CONST',
+            position: 0,
+            expression: code,
+            message: "Constant '$name' declared more than once",
+          );
+        }
+
+        final resolvedValue = _applyConstants(rawValue, constants);
+        constants[name] = resolvedValue;
+        continue;
+      }
+
+      processedLines.add(_applyConstants(line, constants));
+    }
+
+    final processedCode = processedLines.join('\n');
+
+    if (processedCode.isEmpty) {
       return '\n';
     }
 
-    return withoutComments.endsWith('\n')
-        ? withoutComments
-        : '$withoutComments\n';
+    return processedCode.endsWith('\n') ? processedCode : '$processedCode\n';
   }
 }
 
-class SymbolTable {
-  final Map<String, dynamic> table = {};
+class SymbolEntry {
+  int value;
+  final bool immutable;
 
-  void define(String name, dynamic value) {
+  SymbolEntry({required this.value, required this.immutable});
+}
+
+class SymbolTable {
+  final Map<String, SymbolEntry> table = {};
+
+  void define(String name, int value, {bool immutable = false}) {
     final trimmedName = name.trim();
 
     if (trimmedName.isEmpty) {
@@ -197,10 +249,25 @@ class SymbolTable {
       throw SemanticError("Invalid identifier '$name'");
     }
 
-    table[trimmedName] = value;
+    if (table.containsKey(trimmedName)) {
+      final current = table[trimmedName]!;
+
+      if (immutable) {
+        throw SemanticError("Variable '$trimmedName' is already defined");
+      }
+
+      if (current.immutable) {
+        throw SemanticError("cannot change the value of $trimmedName");
+      }
+
+      current.value = value;
+      return;
+    }
+
+    table[trimmedName] = SymbolEntry(value: value, immutable: immutable);
   }
 
-  dynamic resolve(String name) {
+  int resolve(String name) {
     final trimmedName = name.trim();
 
     if (trimmedName.isEmpty) {
@@ -211,7 +278,7 @@ class SymbolTable {
       throw SemanticError("Variable '$trimmedName' is not defined");
     }
 
-    return table[trimmedName];
+    return table[trimmedName]!.value;
   }
 }
 
@@ -328,6 +395,11 @@ class Lexer {
         return;
       }
 
+      if (identifier == 'imut') {
+        next = Token('IMUT', identifier, start);
+        return;
+      }
+
       next = Token('IDEN', identifier, start);
       return;
     }
@@ -388,6 +460,55 @@ class Parser {
     if (lexer.next.type == 'END') {
       lexer.selectToken();
       return NoOp();
+    }
+
+    if (lexer.next.type == 'IMUT') {
+      lexer.selectToken();
+
+      if (lexer.next.type != 'IDEN') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_IDENTIFIER',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected identifier after 'imut', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      final identName = lexer.next.value;
+      lexer.selectToken();
+
+      if (lexer.next.type != 'ASSIGN') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_ASSIGN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected '=' after immutable identifier '$identName', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      final expr = parseExpression();
+
+      if (lexer.next.type != 'END' && lexer.next.type != 'EOF') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_EOL',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected end of line after immutable declaration, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      if (lexer.next.type == 'END') {
+        lexer.selectToken();
+      }
+
+      return Assignment(identName, expr, immutable: true);
     }
 
     if (lexer.next.type == 'IDEN') {
