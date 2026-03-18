@@ -14,14 +14,14 @@ abstract class Node {
 
   Node(this.value, [List<Node>? children]) : children = children ?? [];
 
-  int evaluate();
+  int evaluate(SymbolTable st);
 }
 
 class IntVal extends Node {
   IntVal(int value) : super(value);
 
   @override
-  int evaluate() => value as int;
+  int evaluate(SymbolTable st) => value as int;
 }
 
 class UnOp extends Node {
@@ -36,8 +36,8 @@ class UnOp extends Node {
   }
 
   @override
-  int evaluate() {
-    final operandValue = children[0].evaluate();
+  int evaluate(SymbolTable st) {
+    final operandValue = children[0].evaluate(st);
     switch (value) {
       case '+':
         return operandValue;
@@ -60,9 +60,9 @@ class BinOp extends Node {
   BinOp(String op, Node left, Node right) : super(op, [left, right]);
 
   @override
-  int evaluate() {
-    final leftValue = children[0].evaluate();
-    final rightValue = children[1].evaluate();
+  int evaluate(SymbolTable st) {
+    final leftValue = children[0].evaluate(st);
+    final rightValue = children[1].evaluate(st);
 
     switch (value) {
       case '+':
@@ -82,6 +82,58 @@ class BinOp extends Node {
         throw SemanticError("Invalid binary operator '$value'");
     }
   }
+}
+
+class Identifier extends Node {
+  Identifier(String name) : super(name, []);
+
+  @override
+  int evaluate(SymbolTable st) {
+    return st.resolve(value as String) as int;
+  }
+}
+
+class Print extends Node {
+  Print(Node expression) : super('print', [expression]);
+
+  @override
+  int evaluate(SymbolTable st) {
+    final value = children[0].evaluate(st);
+    print(value);
+    return value;
+  }
+}
+
+class Assignment extends Node {
+  Assignment(String variableName, Node expression)
+    : super(variableName, [expression]);
+
+  @override
+  int evaluate(SymbolTable st) {
+    final resolved = children[0].evaluate(st);
+    st.define(value, resolved);
+    return resolved;
+  }
+}
+
+class Block extends Node {
+  Block(List<Node> statements) : super('block', statements);
+
+  @override
+  int evaluate(SymbolTable st) {
+    int result = 0;
+    for (final stmt in children) {
+      result = stmt.evaluate(st);
+    }
+    return result;
+  }
+}
+
+class NoOp extends Node {
+  NoOp() : super('noop', []);
+
+  @override
+  int evaluate(SymbolTable st) => 0;
 }
 
 class SemanticError implements Exception {
@@ -131,6 +183,38 @@ class Prepro {
   }
 }
 
+class SymbolTable {
+  final Map<String, dynamic> table = {};
+
+  void define(String name, dynamic value) {
+    final trimmedName = name.trim();
+
+    if (trimmedName.isEmpty) {
+      throw SemanticError('Identifier name cannot be empty');
+    }
+
+    if (!RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*$').hasMatch(trimmedName)) {
+      throw SemanticError("Invalid identifier '$name'");
+    }
+
+    table[trimmedName] = value;
+  }
+
+  dynamic resolve(String name) {
+    final trimmedName = name.trim();
+
+    if (trimmedName.isEmpty) {
+      throw SemanticError('Identifier name cannot be empty');
+    }
+
+    if (!table.containsKey(trimmedName)) {
+      throw SemanticError("Variable '$trimmedName' is not defined");
+    }
+
+    return table[trimmedName];
+  }
+}
+
 class Lexer {
   final String source;
   int position = 0;
@@ -142,9 +226,16 @@ class Lexer {
 
   void _skipSpaces() {
     while (position < source.length &&
+        source[position] != '\n' &&
         RegExp(r'\s').hasMatch(source[position])) {
       position++;
     }
+  }
+
+  bool _isLetter(String char) => RegExp(r'^[a-zA-Z]$').hasMatch(char);
+
+  bool _isLetterOrDigitOrUnderscore(String char) {
+    return RegExp(r'^[a-zA-Z0-9_]$').hasMatch(char);
   }
 
   void selectToken() {
@@ -210,6 +301,37 @@ class Lexer {
       return;
     }
 
+    if (currentChar == '\n') {
+      next = Token('END', currentChar, position);
+      position++;
+      return;
+    }
+
+    if (currentChar == '=') {
+      next = Token('ASSIGN', currentChar, position);
+      position++;
+      return;
+    }
+
+    if (_isLetter(currentChar)) {
+      final start = position;
+      var identifier = '';
+
+      while (position < source.length &&
+          _isLetterOrDigitOrUnderscore(source[position])) {
+        identifier += source[position];
+        position++;
+      }
+
+      if (identifier == 'print') {
+        next = Token('PRINT', identifier, start);
+        return;
+      }
+
+      next = Token('IDEN', identifier, start);
+      return;
+    }
+
     if (int.tryParse(currentChar) != null) {
       final start = position;
       var number = '';
@@ -248,6 +370,113 @@ class Parser {
     }
 
     return node;
+  }
+
+  Node parseProgram() {
+    List<Node> statements = [];
+    while (lexer.next.type != 'EOF') {
+      statements.add(parseStatement());
+    }
+    return Block(statements);
+  }
+
+  Node parseStatement() {
+    if (lexer.next.type == 'END') {
+      lexer.selectToken();
+      return NoOp();
+    }
+
+    if (lexer.next.type == 'IDEN') {
+      final identName = lexer.next.value;
+      lexer.selectToken();
+
+      if (lexer.next.type != 'ASSIGN') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_ASSIGN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected '=' after identifier '\'$identName\'', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      final expr = parseExpression();
+
+      if (lexer.next.type != 'END' && lexer.next.type != 'EOF') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_EOL',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected end of line after assignment, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      if (lexer.next.type == 'END') {
+        lexer.selectToken();
+      }
+
+      return Assignment(identName, expr);
+    }
+
+    if (lexer.next.type == 'PRINT') {
+      lexer.selectToken();
+
+      if (lexer.next.type != 'OPEN_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_OPEN_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected '(' after print, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      final expr = parseExpression();
+
+      if (lexer.next.type != 'CLOSE_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected ')' after expression in print, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      if (lexer.next.type != 'END' && lexer.next.type != 'EOF') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_EOL',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected end of line after print statement, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      if (lexer.next.type == 'END') {
+        lexer.selectToken();
+      }
+
+      return Print(expr);
+    }
+
+    throw CompilerError(
+      sourceTag: 'Parser',
+      code: 'E_PAR_EXPECTED_STATEMENT',
+      position: lexer.next.position,
+      expression: lexer.source,
+      message:
+          "Expected statement (assignment, print, or empty line), found '${lexer.next.value}' (${lexer.next.type})",
+    );
   }
 
   Node parseTerm() {
@@ -306,19 +535,25 @@ class Parser {
       return node;
     }
 
+    if (lexer.next.type == 'IDEN') {
+      final identName = lexer.next.value;
+      lexer.selectToken();
+      return Identifier(identName);
+    }
+
     throw CompilerError(
       sourceTag: 'Parser',
       code: 'E_PAR_EXPECTED_FACTOR',
       position: lexer.next.position,
       expression: lexer.source,
       message:
-          "Expected number, sign (+/-), or '(', found '${lexer.next.value}' (${lexer.next.type})",
+          "Expected number, identifier, sign (+/-), or '(', found '${lexer.next.value}' (${lexer.next.type})",
     );
   }
 
   int run(String code) {
     lexer = Lexer(code);
-    final root = parseExpression();
+    final root = parseProgram();
 
     if (lexer.next.type != 'EOF') {
       throw CompilerError(
@@ -331,7 +566,7 @@ class Parser {
       );
     }
 
-    return root.evaluate();
+    return root.evaluate(SymbolTable());
   }
 }
 
