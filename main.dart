@@ -375,6 +375,10 @@ class Parser {
   Node parseProgram() {
     List<Node> statements = [];
     while (lexer.next.type != 'EOF') {
+      if (lexer.next.type == 'END') {
+        lexer.selectToken();
+        continue;
+      }
       statements.add(parseStatement());
     }
     return Block(statements);
