@@ -44,7 +44,9 @@ class UnOp extends Node {
         return -operandValue;
       case "!":
         if (operandValue < 0) {
-          throw SemanticError("Factorial is only defined for non-negative integers");
+          throw SemanticError(
+            "Factorial is only defined for non-negative integers",
+          );
         }
         return _factorial(operandValue);
       default:
@@ -110,6 +112,24 @@ class CompilerError implements Exception {
   }
 }
 
+// Use regex to remove comment lines
+class Prepro {
+  static String filter(String code) {
+    final withoutComments = code.replaceAll(
+      RegExp(r'--.*$', multiLine: true),
+      '',
+    );
+
+    if (withoutComments.isEmpty) {
+      return "\n";
+    }
+
+    return withoutComments.endsWith("\n")
+        ? withoutComments
+        : "$withoutComments\n";
+  }
+}
+
 class Lexer {
   final String source;
   int position = 0;
@@ -120,7 +140,8 @@ class Lexer {
   }
 
   void _skipSpaces() {
-    while (position < source.length && source[position] == " ") {
+    while (position < source.length &&
+        RegExp(r'\s').hasMatch(source[position])) {
       position++;
     }
   }
@@ -135,54 +156,54 @@ class Lexer {
 
     final currentChar = source[position];
 
-      if (currentChar == "+"){
-        next = Token("PLUS", currentChar, position);
-        position++;
-        return;
-      }
+    if (currentChar == "+") {
+      next = Token("PLUS", currentChar, position);
+      position++;
+      return;
+    }
 
-      if (currentChar == "-"){
-        next = Token("MINUS", currentChar, position);
-        position++;
+    if (currentChar == "-") {
+      next = Token("MINUS", currentChar, position);
+      position++;
+      return;
+    }
+
+    if (currentChar == "^") {
+      next = Token("XOR", currentChar, position);
+      position++;
+      return;
+    }
+    // * / ( )
+    if (currentChar == "*") {
+      if (position + 1 < source.length && source[position + 1] == "*") {
+        next = Token("POWER", "**", position);
+        position += 2;
         return;
       }
-    
-      if (currentChar == "^"){
-        next = Token("XOR", currentChar, position);
-        position++;
-        return;
-      }
-      // * / ( )
-      if (currentChar == "*"){
-        if (position + 1 < source.length && source[position + 1] == "*") {
-          next = Token("POWER", "**", position);
-          position += 2;
-          return;
-        }
-        next = Token("MULT", currentChar, position);
-        position++;
-        return;
-      }
-      if (currentChar == "/"){
-        next = Token("DIV", currentChar, position);
-        position++;
-        return;
-      }
-      if (currentChar == "("){
-        next = Token("OPEN_PAR", currentChar, position);
-        position++;
-        return;
-      }
-      if (currentChar == ")"){
-        next = Token("CLOSE_PAR", currentChar, position);
-        position++;
-        return;
-      }
-      if (currentChar == "!"){
-        next = Token("FACT", currentChar, position);
-        position++;
-        return;
-      }
+      next = Token("MULT", currentChar, position);
+      position++;
+      return;
+    }
+    if (currentChar == "/") {
+      next = Token("DIV", currentChar, position);
+      position++;
+      return;
+    }
+    if (currentChar == "(") {
+      next = Token("OPEN_PAR", currentChar, position);
+      position++;
+      return;
+    }
+    if (currentChar == ")") {
+      next = Token("CLOSE_PAR", currentChar, position);
+      position++;
+      return;
+    }
+    if (currentChar == "!") {
+      next = Token("FACT", currentChar, position);
+      position++;
+      return;
+    }
     if (int.tryParse(currentChar) != null) {
       final start = position;
       var number = "";
@@ -296,7 +317,8 @@ class Parser {
         code: "E_PAR_UNEXPECTED_TOKEN",
         position: lexer.next.position,
         expression: lexer.source,
-        message: "Unexpected token '${lexer.next.value}' (${lexer.next.type}) after end of expression",
+        message:
+            "Unexpected token '${lexer.next.value}' (${lexer.next.type}) after end of expression",
       );
     }
     return root.evaluate();
@@ -308,15 +330,19 @@ void main(List<String> args) {
     stdout.writeln("Use: dart run main.dart 10 + 5 - 3");
     exit(64);
   }
+  final input = args.join(" ");
+  final inputFile = File(input);
 
-  final code = args.join(" ");
-  if (code.trim().isEmpty) {
-    stderr.writeln(
-      "[Parser] E_PAR_EMPTY_EXPRESSION at position 0: Empty expression is not allowed. Expected a number. Expression: '$code'.",
-    );
-    exit(1);
+  String sourceCode;
+  if (args.length == 1 && inputFile.existsSync()) {
+    sourceCode = inputFile.readAsStringSync();
+  } else {
+    sourceCode = input;
   }
 
+  final code = Prepro.filter(sourceCode);
+
+  print("Evaluating expression: $code");
   final parser = Parser();
 
   try {

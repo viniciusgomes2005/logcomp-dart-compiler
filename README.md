@@ -7,12 +7,17 @@ This repository is monitored by Compiler Tester for automatic compilation status
 ## Diagrama Sintático
 
 ```mermaid
-flowchart LR
-    Start(( )) --> Number1[NUMBER]
-    Number1 --> Op{+ or - or ^?}
-    Op -->|Yes| Number2[NUMBER]
-    Number2 --> Op
-    Op -->|No| End(( ))
+flowchart TB
+    N1(( ))
+    N2(( ))
+    N3(( ))
+    N4(( ))
+    N5(( ))
+
+    N1 --- N2
+    N1 --- N3
+    N3 --- N4
+    N4 --- N5
 ```
 
 **Descrição:**
