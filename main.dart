@@ -89,7 +89,7 @@ class Identifier extends Node {
 
   @override
   int evaluate(SymbolTable st) {
-    return st.resolve(value as String) as int;
+    return st.resolve(value as String);
   }
 }
 
@@ -193,7 +193,7 @@ class Prepro {
 
     for (final line in withoutComments.split('\n')) {
       final constMatch = RegExp(
-        r'^\s*const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*=\s*(.+?)\s*$',
+        r'^\s*const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*(?:=\s*)?(.+?)\s*$',
       ).firstMatch(line);
 
       if (constMatch != null) {
