@@ -596,8 +596,7 @@ void main(List<String> args) {
   final parser = Parser();
 
   try {
-    final result = parser.run(code);
-    stdout.writeln(result);
+    parser.run(code);
   } on SemanticError catch (e) {
     stderr.writeln(e.toString());
     exit(1);
