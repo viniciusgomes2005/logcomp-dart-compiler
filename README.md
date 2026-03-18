@@ -6,19 +6,7 @@ This repository is monitored by Compiler Tester for automatic compilation status
 
 ## Diagrama Sintático
 
-```mermaid
-flowchart TB
-    N1(( ))
-    N2(( ))
-    N3(( ))
-    N4(( ))
-    N5(( ))
-
-    N1 --- N2
-    N1 --- N3
-    N3 --- N4
-    N4 --- N5
-```
+![Diagrama sintático](./images/sintaxe.png)
 
 **Descrição:**
 - `EXPRESSION` começa por `TERM` e aceita repetições com `+`, `-` ou `^`
