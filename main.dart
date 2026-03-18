@@ -1,79 +1,11 @@
 import 'dart:io';
 
 class Token {
-  String type;
-  String value;
-  int position;
+  final String type;
+  final String value;
+  final int position;
+
   Token(this.type, this.value, this.position);
-}
-
-abstract class Node {
-  final dynamic value;
-  final List<Node> children;
-
-  Node(this.value, [List<Node>? children]) : children = children ?? [];
-
-  int evaluate();
-}
-
-class IntVal extends Node {
-  IntVal(int value) : super(value);
-
-  @override
-  int evaluate() => value as int;
-}
-
-class UnOp extends Node {
-  UnOp(String op, Node operand) : super(op, [operand]);
-
-  @override
-  int evaluate() {
-    final operandValue = children[0].evaluate();
-    switch (value) {
-      case "+":
-        return operandValue;
-      case "-":
-        return -operandValue;
-      default:
-        throw SemanticError("Invalid unary operator '$value'");
-    }
-  }
-}
-
-class BinOp extends Node {
-  BinOp(String op, Node left, Node right) : super(op, [left, right]);
-
-  @override
-  int evaluate() {
-    final leftValue = children[0].evaluate();
-    final rightValue = children[1].evaluate();
-    switch (value) {
-      case "+":
-        return leftValue + rightValue;
-      case "-":
-        return leftValue - rightValue;
-      case "*":
-        return leftValue * rightValue;
-      case "/":
-        if (rightValue == 0) {
-          throw SemanticError("Division by zero is not allowed");
-        }
-        return leftValue ~/ rightValue;
-      case "^":
-        return leftValue ^ rightValue;
-      default:
-        throw SemanticError("Invalid binary operator '$value'");
-    }
-  }
-}
-
-class SemanticError implements Exception {
-  final String message;
-
-  SemanticError(this.message);
-
-  @override
-  String toString() => "[Semantic] $message";
 }
 
 abstract class Node {
@@ -107,14 +39,14 @@ class UnOp extends Node {
   int evaluate() {
     final operandValue = children[0].evaluate();
     switch (value) {
-      case "+":
+      case '+':
         return operandValue;
-      case "-":
+      case '-':
         return -operandValue;
-      case "!":
+      case '!':
         if (operandValue < 0) {
           throw SemanticError(
-            "Factorial is only defined for non-negative integers",
+            'Factorial is only defined for non-negative integers',
           );
         }
         return _factorial(operandValue);
@@ -131,19 +63,20 @@ class BinOp extends Node {
   int evaluate() {
     final leftValue = children[0].evaluate();
     final rightValue = children[1].evaluate();
+
     switch (value) {
-      case "+":
+      case '+':
         return leftValue + rightValue;
-      case "-":
+      case '-':
         return leftValue - rightValue;
-      case "*":
+      case '*':
         return leftValue * rightValue;
-      case "/":
+      case '/':
         if (rightValue == 0) {
-          throw SemanticError("Division by zero is not allowed");
+          throw SemanticError('Division by zero is not allowed');
         }
         return leftValue ~/ rightValue;
-      case "^":
+      case '^':
         return leftValue ^ rightValue;
       default:
         throw SemanticError("Invalid binary operator '$value'");
@@ -157,7 +90,7 @@ class SemanticError implements Exception {
   SemanticError(this.message);
 
   @override
-  String toString() => "[Semantic] $message";
+  String toString() => '[Semantic] $message';
 }
 
 class CompilerError implements Exception {
@@ -181,7 +114,6 @@ class CompilerError implements Exception {
   }
 }
 
-// Use regex to remove comment lines
 class Prepro {
   static String filter(String code) {
     final withoutComments = code.replaceAll(
@@ -190,12 +122,12 @@ class Prepro {
     );
 
     if (withoutComments.isEmpty) {
-      return "\n";
+      return '\n';
     }
 
-    return withoutComments.endsWith("\n")
+    return withoutComments.endsWith('\n')
         ? withoutComments
-        : "$withoutComments\n";
+        : '$withoutComments\n';
   }
 }
 
@@ -219,75 +151,80 @@ class Lexer {
     _skipSpaces();
 
     if (position >= source.length) {
-      next = Token("EOF", "", position);
+      next = Token('EOF', '', position);
       return;
     }
 
     final currentChar = source[position];
 
-    if (currentChar == "+") {
-      next = Token("PLUS", currentChar, position);
+    if (currentChar == '+') {
+      next = Token('PLUS', currentChar, position);
       position++;
       return;
     }
 
-    if (currentChar == "-") {
-      next = Token("MINUS", currentChar, position);
+    if (currentChar == '-') {
+      next = Token('MINUS', currentChar, position);
       position++;
       return;
     }
 
-    if (currentChar == "^") {
-      next = Token("XOR", currentChar, position);
+    if (currentChar == '^') {
+      next = Token('XOR', currentChar, position);
       position++;
       return;
     }
-    // * / ( )
-    if (currentChar == "*") {
-      if (position + 1 < source.length && source[position + 1] == "*") {
-        next = Token("POWER", "**", position);
+
+    if (currentChar == '*') {
+      if (position + 1 < source.length && source[position + 1] == '*') {
+        next = Token('POWER', '**', position);
         position += 2;
         return;
       }
-      next = Token("MULT", currentChar, position);
+      next = Token('MULT', currentChar, position);
       position++;
       return;
     }
-    if (currentChar == "/") {
-      next = Token("DIV", currentChar, position);
+
+    if (currentChar == '/') {
+      next = Token('DIV', currentChar, position);
       position++;
       return;
     }
-    if (currentChar == "(") {
-      next = Token("OPEN_PAR", currentChar, position);
+
+    if (currentChar == '(') {
+      next = Token('OPEN_PAR', currentChar, position);
       position++;
       return;
     }
-    if (currentChar == ")") {
-      next = Token("CLOSE_PAR", currentChar, position);
+
+    if (currentChar == ')') {
+      next = Token('CLOSE_PAR', currentChar, position);
       position++;
       return;
     }
-    if (currentChar == "!") {
-      next = Token("FACT", currentChar, position);
+
+    if (currentChar == '!') {
+      next = Token('FACT', currentChar, position);
       position++;
       return;
     }
+
     if (int.tryParse(currentChar) != null) {
       final start = position;
-      var number = "";
+      var number = '';
       while (position < source.length &&
           int.tryParse(source[position]) != null) {
         number += source[position];
         position++;
       }
-      next = Token("INT", number, start);
+      next = Token('INT', number, start);
       return;
     }
 
     throw CompilerError(
-      sourceTag: "Lexer",
-      code: "E_LEX_INVALID_CHAR",
+      sourceTag: 'Lexer',
+      code: 'E_LEX_INVALID_CHAR',
       position: position,
       expression: source,
       message:
@@ -301,51 +238,50 @@ class Parser {
 
   Node parseExpression() {
     Node node = parseTerm();
-    
-    while (lexer.next.type == "PLUS" || lexer.next.type == "MINUS" || lexer.next.type == "XOR") {
+
+    while (lexer.next.type == 'PLUS' ||
+        lexer.next.type == 'MINUS' ||
+        lexer.next.type == 'XOR') {
       final op = lexer.next.value;
       lexer.selectToken();
       node = BinOp(op, node, parseTerm());
-      node = BinOp(op, node, parseTerm());
     }
-    return node;
+
     return node;
   }
 
   Node parseTerm() {
     Node node = parseFactor();
-    
-    while (lexer.next.type == "MULT" || lexer.next.type == "DIV") {
+
+    while (lexer.next.type == 'MULT' || lexer.next.type == 'DIV') {
       final op = lexer.next.value;
       lexer.selectToken();
       node = BinOp(op, node, parseFactor());
-      node = BinOp(op, node, parseFactor());
     }
-    return node;
+
     return node;
   }
 
   Node parseFactor() {
+    if (lexer.next.type == 'MINUS') {
+      final op = lexer.next.value;
+      lexer.selectToken();
+      return UnOp(op, parseFactor());
+    }
 
-      if (lexer.next.type == "MINUS") {
-        final op = lexer.next.value;
-        lexer.selectToken();
-        return UnOp(op, parseFactor());
-      }
+    if (lexer.next.type == 'PLUS') {
+      final op = lexer.next.value;
+      lexer.selectToken();
+      return UnOp(op, parseFactor());
+    }
 
-      if (lexer.next.type == "PLUS") {
-        final op = lexer.next.value;
-        lexer.selectToken();
-        return UnOp(op, parseFactor());
-      }
-
-    if (lexer.next.type == "OPEN_PAR") {
+    if (lexer.next.type == 'OPEN_PAR') {
       lexer.selectToken();
       Node node = parseExpression();
-      if (lexer.next.type != "CLOSE_PAR") {
+      if (lexer.next.type != 'CLOSE_PAR') {
         throw CompilerError(
-          sourceTag: "Parser",
-          code: "E_PAR_UNMATCHED_OPEN_PAREN",
+          sourceTag: 'Parser',
+          code: 'E_PAR_UNMATCHED_OPEN_PAREN',
           position: lexer.next.position,
           expression: lexer.source,
           message:
@@ -353,24 +289,26 @@ class Parser {
         );
       }
       lexer.selectToken();
-      while (lexer.next.type == "FACT") {
+      while (lexer.next.type == 'FACT') {
         lexer.selectToken();
-        node = UnOp("!", node);
+        node = UnOp('!', node);
       }
       return node;
     }
 
-    if (lexer.next.type == "INT") {
+    if (lexer.next.type == 'INT') {
       Node node = IntVal(int.parse(lexer.next.value));
       lexer.selectToken();
-      while (lexer.next.type == "FACT") {
+      while (lexer.next.type == 'FACT') {
         lexer.selectToken();
-        return IntVal(value);
+        node = UnOp('!', node);
       }
+      return node;
+    }
 
     throw CompilerError(
-      sourceTag: "Parser",
-      code: "E_PAR_EXPECTED_FACTOR",
+      sourceTag: 'Parser',
+      code: 'E_PAR_EXPECTED_FACTOR',
       position: lexer.next.position,
       expression: lexer.source,
       message:
@@ -381,28 +319,31 @@ class Parser {
   int run(String code) {
     lexer = Lexer(code);
     final root = parseExpression();
-    final root = parseExpression();
-    if (lexer.next.type != "EOF") {
+
+    if (lexer.next.type != 'EOF') {
       throw CompilerError(
-        sourceTag: "Parser",
-        code: "E_PAR_UNEXPECTED_TOKEN",
+        sourceTag: 'Parser',
+        code: 'E_PAR_UNEXPECTED_TOKEN',
         position: lexer.next.position,
         expression: lexer.source,
         message:
             "Unexpected token '${lexer.next.value}' (${lexer.next.type}) after end of expression",
       );
     }
-    return root.evaluate();
+
     return root.evaluate();
   }
 }
 
 void main(List<String> args) {
   if (args.isEmpty) {
-    stdout.writeln("Use: dart run main.dart 10 + 5 - 3");
+    stdout.writeln(
+      'Use: dart run main.dart "10 + 5 - 3" | dart run main.dart teste.lua',
+    );
     exit(64);
   }
-  final input = args.join(" ");
+
+  final input = args.join(' ');
   final inputFile = File(input);
 
   String sourceCode;
@@ -413,8 +354,6 @@ void main(List<String> args) {
   }
 
   final code = Prepro.filter(sourceCode);
-
-  print("Evaluating expression: $code");
   final parser = Parser();
 
   try {
@@ -423,14 +362,11 @@ void main(List<String> args) {
   } on SemanticError catch (e) {
     stderr.writeln(e.toString());
     exit(1);
-  } on SemanticError catch (e) {
-    stderr.writeln(e.toString());
-    exit(1);
   } on CompilerError catch (e) {
     stderr.writeln(e.toString());
     exit(1);
   } catch (e) {
-    stderr.writeln("[Internal] E_INTERNAL: ${e.toString()}");
+    stderr.writeln('[Internal] E_INTERNAL: ${e.toString()}');
     exit(1);
   }
 }
