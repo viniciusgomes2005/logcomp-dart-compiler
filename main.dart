@@ -43,6 +43,8 @@ class UnOp extends Node {
         return operandValue;
       case '-':
         return -operandValue;
+      case 'not':
+        return operandValue == 0 ? 1 : 0;
       case '!':
         if (operandValue < 0) {
           throw SemanticError(
@@ -78,6 +80,16 @@ class BinOp extends Node {
         return leftValue ~/ rightValue;
       case '^':
         return leftValue ^ rightValue;
+      case 'and':
+        return (leftValue != 0 && rightValue != 0) ? 1 : 0;
+      case 'or':
+        return (leftValue != 0 || rightValue != 0) ? 1 : 0;
+      case '==':
+        return leftValue == rightValue ? 1 : 0;
+      case '<':
+        return leftValue < rightValue ? 1 : 0;
+      case '>':
+        return leftValue > rightValue ? 1 : 0;
       default:
         throw SemanticError("Invalid binary operator '$value'");
     }
@@ -104,6 +116,25 @@ class Print extends Node {
   }
 }
 
+class Read extends Node {
+  Read() : super('read', []);
+
+  @override
+  int evaluate(SymbolTable st) {
+    final input = stdin.readLineSync();
+    if (input == null) {
+      throw SemanticError('Read failed: no input provided');
+    }
+
+    final value = int.tryParse(input.trim());
+    if (value == null) {
+      throw SemanticError("Read expected an integer, found '$input'");
+    }
+
+    return value;
+  }
+}
+
 class Assignment extends Node {
   final bool immutable;
 
@@ -126,6 +157,43 @@ class Block extends Node {
     int result = 0;
     for (final stmt in children) {
       result = stmt.evaluate(st);
+    }
+    return result;
+  }
+}
+
+class If extends Node {
+  If(Node condition, Node thenBlock, [Node? elseBlock])
+    : super(
+        'if',
+        elseBlock == null
+            ? [condition, thenBlock]
+            : [condition, thenBlock, elseBlock],
+      );
+
+  @override
+  int evaluate(SymbolTable st) {
+    final conditionValue = children[0].evaluate(st);
+    if (conditionValue != 0) {
+      return children[1].evaluate(st);
+    }
+
+    if (children.length == 3) {
+      return children[2].evaluate(st);
+    }
+
+    return 0;
+  }
+}
+
+class While extends Node {
+  While(Node condition, Node block) : super('while', [condition, block]);
+
+  @override
+  int evaluate(SymbolTable st) {
+    var result = 0;
+    while (children[0].evaluate(st) != 0) {
+      result = children[1].evaluate(st);
     }
     return result;
   }
@@ -369,15 +437,62 @@ class Lexer {
     }
 
     if (currentChar == '\n') {
-      next = Token('END', currentChar, position);
+      next = Token('EOL', currentChar, position);
       position++;
       return;
     }
 
     if (currentChar == '=') {
+      if (position + 1 < source.length && source[position + 1] == '=') {
+        next = Token('EQ', '==', position);
+        position += 2;
+        return;
+      }
       next = Token('ASSIGN', currentChar, position);
       position++;
       return;
+    }
+
+    if (currentChar == '<') {
+      next = Token('LT', currentChar, position);
+      position++;
+      return;
+    }
+
+    if (currentChar == '>') {
+      next = Token('GT', currentChar, position);
+      position++;
+      return;
+    }
+
+    if (currentChar == '&') {
+      if (position + 1 < source.length && source[position + 1] == '&') {
+        next = Token('AND', 'and', position);
+        position += 2;
+        return;
+      }
+      throw CompilerError(
+        sourceTag: 'Lexer',
+        code: 'E_LEX_INVALID_CHAR',
+        position: position,
+        expression: source,
+        message: "Unexpected '&'. Did you mean '&&' or 'and'?",
+      );
+    }
+
+    if (currentChar == '|') {
+      if (position + 1 < source.length && source[position + 1] == '|') {
+        next = Token('OR', 'or', position);
+        position += 2;
+        return;
+      }
+      throw CompilerError(
+        sourceTag: 'Lexer',
+        code: 'E_LEX_INVALID_CHAR',
+        position: position,
+        expression: source,
+        message: "Unexpected '|'. Did you mean '||' or 'or'?",
+      );
     }
 
     if (_isLetter(currentChar)) {
@@ -392,6 +507,56 @@ class Lexer {
 
       if (identifier == 'print') {
         next = Token('PRINT', identifier, start);
+        return;
+      }
+
+      if (identifier == 'if') {
+        next = Token('IF', identifier, start);
+        return;
+      }
+
+      if (identifier == 'while') {
+        next = Token('WHILE', identifier, start);
+        return;
+      }
+
+      if (identifier == 'else') {
+        next = Token('ELSE', identifier, start);
+        return;
+      }
+
+      if (identifier == 'read') {
+        next = Token('READ', identifier, start);
+        return;
+      }
+
+      if (identifier == 'then') {
+        next = Token('OPEN_IF_BRA', identifier, start);
+        return;
+      }
+
+      if (identifier == 'do') {
+        next = Token('OPEN_BRA', identifier, start);
+        return;
+      }
+
+      if (identifier == 'end') {
+        next = Token('CLOSE_BRA', identifier, start);
+        return;
+      }
+
+      if (identifier == 'and') {
+        next = Token('AND', identifier, start);
+        return;
+      }
+
+      if (identifier == 'or') {
+        next = Token('OR', identifier, start);
+        return;
+      }
+
+      if (identifier == 'not') {
+        next = Token('NOT', identifier, start);
         return;
       }
 
@@ -422,7 +587,7 @@ class Lexer {
       position: position,
       expression: source,
       message:
-          "Invalid character '$currentChar' (ASCII ${currentChar.codeUnitAt(0)}). Expected: digits (0-9), operators (+, -, *, /, ^, !), parentheses, or spaces",
+          "Invalid character '$currentChar' (ASCII ${currentChar.codeUnitAt(0)}). Expected: digits, identifiers, operators, parentheses, or spaces",
     );
   }
 }
@@ -447,7 +612,7 @@ class Parser {
   Node parseProgram() {
     List<Node> statements = [];
     while (lexer.next.type != 'EOF') {
-      if (lexer.next.type == 'END') {
+      if (lexer.next.type == 'EOL') {
         lexer.selectToken();
         continue;
       }
@@ -456,10 +621,251 @@ class Parser {
     return Block(statements);
   }
 
+  Node parseBlock(List<String> stopTokens) {
+    final statements = <Node>[];
+
+    while (lexer.next.type != 'EOF' && !stopTokens.contains(lexer.next.type)) {
+      if (lexer.next.type == 'EOL') {
+        lexer.selectToken();
+        continue;
+      }
+      statements.add(parseStatement());
+    }
+
+    return Block(statements);
+  }
+
+  Node parseBoolExpression() {
+    Node node = parseBoolTerm();
+
+    while (lexer.next.type == 'OR') {
+      final op = lexer.next.value;
+      lexer.selectToken();
+      node = BinOp(op, node, parseBoolTerm());
+    }
+
+    return node;
+  }
+
+  Node parseBoolTerm() {
+    Node node = parseRelExpression();
+
+    while (lexer.next.type == 'AND') {
+      final op = lexer.next.value;
+      lexer.selectToken();
+      node = BinOp(op, node, parseRelExpression());
+    }
+
+    return node;
+  }
+
+  Node parseRelExpression() {
+    Node node = parseExpression();
+
+    while (lexer.next.type == 'EQ' ||
+        lexer.next.type == 'LT' ||
+        lexer.next.type == 'GT') {
+      final op = lexer.next.value;
+      lexer.selectToken();
+      node = BinOp(op, node, parseExpression());
+    }
+
+    return node;
+  }
+
   Node parseStatement() {
-    if (lexer.next.type == 'END') {
+    if (lexer.next.type == 'EOL') {
       lexer.selectToken();
       return NoOp();
+    }
+
+    if (lexer.next.type == 'IF') {
+      lexer.selectToken();
+
+      if (lexer.next.type != 'OPEN_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_OPEN_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected '(' after if, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      final condition = parseBoolExpression();
+
+      if (lexer.next.type != 'CLOSE_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected ')' after if condition, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      if (lexer.next.type != 'OPEN_IF_BRA') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_THEN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected 'then' after if condition, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      if (lexer.next.type != 'EOL') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_EOL',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected end of line after 'then', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      final thenBlock = parseBlock(['ELSE', 'CLOSE_BRA']);
+      Node? elseBlock;
+
+      if (lexer.next.type == 'ELSE') {
+        lexer.selectToken();
+
+        if (lexer.next.type != 'EOL') {
+          throw CompilerError(
+            sourceTag: 'Parser',
+            code: 'E_PAR_EXPECTED_EOL',
+            position: lexer.next.position,
+            expression: lexer.source,
+            message:
+                "Expected end of line after 'else', found '${lexer.next.value}' (${lexer.next.type})",
+          );
+        }
+        lexer.selectToken();
+
+        elseBlock = parseBlock(['CLOSE_BRA']);
+      }
+
+      if (lexer.next.type != 'CLOSE_BRA') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_END',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected 'end' to close if block, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_EOL',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected end of line after if block, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      if (lexer.next.type == 'EOL') {
+        lexer.selectToken();
+      }
+
+      return If(condition, thenBlock, elseBlock);
+    }
+
+    if (lexer.next.type == 'WHILE') {
+      lexer.selectToken();
+
+      if (lexer.next.type != 'OPEN_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_OPEN_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected '(' after while, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      final condition = parseBoolExpression();
+
+      if (lexer.next.type != 'CLOSE_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected ')' after while condition, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      if (lexer.next.type != 'OPEN_BRA') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_DO',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected 'do' after while condition, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      if (lexer.next.type != 'EOL') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_EOL',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected end of line after 'do', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      final body = parseBlock(['CLOSE_BRA']);
+
+      if (lexer.next.type != 'CLOSE_BRA') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_END',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected 'end' to close while block, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_EOL',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected end of line after while block, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      if (lexer.next.type == 'EOL') {
+        lexer.selectToken();
+      }
+
+      return While(condition, body);
     }
 
     if (lexer.next.type == 'IMUT') {
@@ -491,9 +897,9 @@ class Parser {
       }
       lexer.selectToken();
 
-      final expr = parseExpression();
+      final expr = parseBoolExpression();
 
-      if (lexer.next.type != 'END' && lexer.next.type != 'EOF') {
+      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
         throw CompilerError(
           sourceTag: 'Parser',
           code: 'E_PAR_EXPECTED_EOL',
@@ -504,7 +910,7 @@ class Parser {
         );
       }
 
-      if (lexer.next.type == 'END') {
+      if (lexer.next.type == 'EOL') {
         lexer.selectToken();
       }
 
@@ -527,9 +933,9 @@ class Parser {
       }
       lexer.selectToken();
 
-      final expr = parseExpression();
+      final expr = parseBoolExpression();
 
-      if (lexer.next.type != 'END' && lexer.next.type != 'EOF') {
+      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
         throw CompilerError(
           sourceTag: 'Parser',
           code: 'E_PAR_EXPECTED_EOL',
@@ -540,7 +946,7 @@ class Parser {
         );
       }
 
-      if (lexer.next.type == 'END') {
+      if (lexer.next.type == 'EOL') {
         lexer.selectToken();
       }
 
@@ -562,7 +968,7 @@ class Parser {
       }
       lexer.selectToken();
 
-      final expr = parseExpression();
+      final expr = parseBoolExpression();
 
       if (lexer.next.type != 'CLOSE_PAR') {
         throw CompilerError(
@@ -576,7 +982,7 @@ class Parser {
       }
       lexer.selectToken();
 
-      if (lexer.next.type != 'END' && lexer.next.type != 'EOF') {
+      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
         throw CompilerError(
           sourceTag: 'Parser',
           code: 'E_PAR_EXPECTED_EOL',
@@ -587,7 +993,7 @@ class Parser {
         );
       }
 
-      if (lexer.next.type == 'END') {
+      if (lexer.next.type == 'EOL') {
         lexer.selectToken();
       }
 
@@ -600,7 +1006,7 @@ class Parser {
       position: lexer.next.position,
       expression: lexer.source,
       message:
-          "Expected statement (assignment, print, or empty line), found '${lexer.next.value}' (${lexer.next.type})",
+          "Expected statement (if, while, assignment, print, or empty line), found '${lexer.next.value}' (${lexer.next.type})",
     );
   }
 
@@ -629,9 +1035,15 @@ class Parser {
       return UnOp(op, parseFactor());
     }
 
+    if (lexer.next.type == 'NOT') {
+      final op = lexer.next.value;
+      lexer.selectToken();
+      return UnOp(op, parseFactor());
+    }
+
     if (lexer.next.type == 'OPEN_PAR') {
       lexer.selectToken();
-      Node node = parseExpression();
+      Node node = parseBoolExpression();
       if (lexer.next.type != 'CLOSE_PAR') {
         throw CompilerError(
           sourceTag: 'Parser',
@@ -648,6 +1060,36 @@ class Parser {
         node = UnOp('!', node);
       }
       return node;
+    }
+
+    if (lexer.next.type == 'READ') {
+      lexer.selectToken();
+
+      if (lexer.next.type != 'OPEN_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_OPEN_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected '(' after read, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      if (lexer.next.type != 'CLOSE_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected ')' after read, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      return Read();
     }
 
     if (lexer.next.type == 'INT') {
@@ -672,7 +1114,7 @@ class Parser {
       position: lexer.next.position,
       expression: lexer.source,
       message:
-          "Expected number, identifier, sign (+/-), or '(', found '${lexer.next.value}' (${lexer.next.type})",
+          "Expected number, identifier, read(), unary operator (+/-/not), or '(', found '${lexer.next.value}' (${lexer.next.type})",
     );
   }
 
