@@ -8,20 +8,55 @@ class Token {
   Token(this.type, this.value, this.position);
 }
 
+class Variable {
+  dynamic value;
+  final String type;
+  final bool immutable;
+
+  Variable({required this.value, required this.type, this.immutable = false});
+
+  Variable copy() => Variable(value: value, type: type, immutable: immutable);
+}
+
 abstract class Node {
   final dynamic value;
   final List<Node> children;
 
   Node(this.value, [List<Node>? children]) : children = children ?? [];
 
-  int evaluate(SymbolTable st);
+  Variable evaluate(SymbolTable st);
 }
 
 class IntVal extends Node {
   IntVal(int value) : super(value);
 
   @override
-  int evaluate(SymbolTable st) => value as int;
+  Variable evaluate(SymbolTable st) =>
+      Variable(value: value as int, type: 'number');
+}
+
+class FloatVal extends Node {
+  FloatVal(double value) : super(value);
+
+  @override
+  Variable evaluate(SymbolTable st) =>
+      Variable(value: value as double, type: 'float');
+}
+
+class BoolVal extends Node {
+  BoolVal(bool value) : super(value);
+
+  @override
+  Variable evaluate(SymbolTable st) =>
+      Variable(value: value as bool, type: 'boolean');
+}
+
+class StringVal extends Node {
+  StringVal(String value) : super(value);
+
+  @override
+  Variable evaluate(SymbolTable st) =>
+      Variable(value: value as String, type: 'string');
 }
 
 class UnOp extends Node {
@@ -35,61 +70,274 @@ class UnOp extends Node {
     return result;
   }
 
+  bool _isNumericType(String type) => type == 'number' || type == 'float';
+
   @override
-  int evaluate(SymbolTable st) {
-    final operandValue = children[0].evaluate(st);
+  Variable evaluate(SymbolTable st) {
+    final operand = children[0].evaluate(st);
+
     switch (value) {
       case '+':
-        return operandValue;
+        if (!_isNumericType(operand.type)) {
+          throw SemanticError("Unary '+' expects numeric operand");
+        }
+        return operand.copy();
       case '-':
-        return -operandValue;
+        if (!_isNumericType(operand.type)) {
+          throw SemanticError("Unary '-' expects numeric operand");
+        }
+        if (operand.type == 'float') {
+          return Variable(value: -(operand.value as double), type: 'float');
+        }
+        return Variable(value: -(operand.value as int), type: 'number');
       case 'not':
-        return operandValue == 0 ? 1 : 0;
+        return Variable(value: !_toBoolean(operand), type: 'boolean');
       case '!':
-        if (operandValue < 0) {
+        if (operand.type != 'number') {
+          throw SemanticError('Factorial is only defined for integer numbers');
+        }
+        final n = operand.value as int;
+        if (n < 0) {
           throw SemanticError(
             'Factorial is only defined for non-negative integers',
           );
         }
-        return _factorial(operandValue);
+        return Variable(value: _factorial(n), type: 'number');
       default:
         throw SemanticError("Invalid unary operator '$value'");
     }
   }
 }
 
+class CastOp extends Node {
+  CastOp(String targetType, Node operand) : super(targetType, [operand]);
+
+  bool _isNumericType(String type) => type == 'number' || type == 'float';
+
+  @override
+  Variable evaluate(SymbolTable st) {
+    final input = children[0].evaluate(st);
+    final target = value as String;
+
+    switch (target) {
+      case 'number':
+        if (input.type == 'number') {
+          return input.copy();
+        }
+        if (input.type == 'float') {
+          return Variable(
+            value: (input.value as double).round(),
+            type: 'number',
+          );
+        }
+        if (input.type == 'boolean') {
+          return Variable(value: (input.value as bool) ? 1 : 0, type: 'number');
+        }
+        if (input.type == 'string') {
+          final raw = (input.value as String).trim();
+          final asInt = int.tryParse(raw);
+          if (asInt != null) {
+            return Variable(value: asInt, type: 'number');
+          }
+          final asDouble = double.tryParse(raw);
+          if (asDouble != null) {
+            return Variable(value: asDouble.round(), type: 'number');
+          }
+          throw SemanticError("Cannot cast '$raw' to number");
+        }
+        break;
+      case 'float':
+        if (input.type == 'float') {
+          return input.copy();
+        }
+        if (input.type == 'number') {
+          return Variable(
+            value: (input.value as int).toDouble(),
+            type: 'float',
+          );
+        }
+        if (input.type == 'boolean') {
+          return Variable(
+            value: (input.value as bool) ? 1.0 : 0.0,
+            type: 'float',
+          );
+        }
+        if (input.type == 'string') {
+          final raw = (input.value as String).trim();
+          final parsed = double.tryParse(raw);
+          if (parsed == null) {
+            throw SemanticError("Cannot cast '$raw' to float");
+          }
+          return Variable(value: parsed, type: 'float');
+        }
+        break;
+      case 'boolean':
+        if (input.type == 'boolean') {
+          return input.copy();
+        }
+        if (_isNumericType(input.type)) {
+          final numericValue = input.type == 'float'
+              ? input.value as double
+              : input.value as int;
+          return Variable(value: numericValue != 0, type: 'boolean');
+        }
+        if (input.type == 'string') {
+          final normalized = (input.value as String).trim().toLowerCase();
+          if (normalized == 'true') {
+            return Variable(value: true, type: 'boolean');
+          }
+          if (normalized == 'false') {
+            return Variable(value: false, type: 'boolean');
+          }
+          throw SemanticError(
+            "Cannot cast string '${input.value}' to boolean. Use 'true' or 'false'",
+          );
+        }
+        break;
+      case 'string':
+        return Variable(value: _toStringValue(input), type: 'string');
+      default:
+        throw SemanticError("Unsupported cast target type '$target'");
+    }
+
+    throw SemanticError(
+      "Cannot cast value of type '${input.type}' to '$target'",
+    );
+  }
+}
+
 class BinOp extends Node {
   BinOp(String op, Node left, Node right) : super(op, [left, right]);
 
+  bool _isNumericType(String type) => type == 'number' || type == 'float';
+
+  Variable _numericResult(num value, bool hasFloat) {
+    if (hasFloat) {
+      return Variable(value: value.toDouble(), type: 'float');
+    }
+    return Variable(value: value.toInt(), type: 'number');
+  }
+
   @override
-  int evaluate(SymbolTable st) {
-    final leftValue = children[0].evaluate(st);
-    final rightValue = children[1].evaluate(st);
+  Variable evaluate(SymbolTable st) {
+    final left = children[0].evaluate(st);
+    final right = children[1].evaluate(st);
 
     switch (value) {
       case '+':
-        return leftValue + rightValue;
+        if (left.type == 'string' || right.type == 'string') {
+          return Variable(
+            value: '${_toStringValue(left)}${_toStringValue(right)}',
+            type: 'string',
+          );
+        }
+
+        if (_isNumericType(left.type) && _isNumericType(right.type)) {
+          final hasFloat = left.type == 'float' || right.type == 'float';
+          final leftNum = left.type == 'float'
+              ? left.value as double
+              : left.value as int;
+          final rightNum = right.type == 'float'
+              ? right.value as double
+              : right.value as int;
+          return _numericResult(leftNum + rightNum, hasFloat);
+        }
+        throw SemanticError(
+          "Operator '+' expects numeric operands or string concatenation",
+        );
+
       case '-':
-        return leftValue - rightValue;
       case '*':
-        return leftValue * rightValue;
       case '/':
-        if (rightValue == 0) {
+        if (!(_isNumericType(left.type) && _isNumericType(right.type))) {
+          throw SemanticError("Operator '$value' expects numeric operands");
+        }
+
+        final hasFloat = left.type == 'float' || right.type == 'float';
+        final leftNum = left.type == 'float'
+            ? left.value as double
+            : left.value as int;
+        final rightNum = right.type == 'float'
+            ? right.value as double
+            : right.value as int;
+
+        if (value == '/' && rightNum == 0) {
           throw SemanticError('Division by zero is not allowed');
         }
-        return leftValue ~/ rightValue;
+
+        if (value == '-' && hasFloat) {
+          return Variable(value: leftNum - rightNum, type: 'float');
+        }
+        if (value == '*' && hasFloat) {
+          return Variable(value: leftNum * rightNum, type: 'float');
+        }
+        if (value == '/') {
+          if (hasFloat) {
+            return Variable(value: leftNum / rightNum, type: 'float');
+          }
+          return Variable(value: (leftNum ~/ rightNum), type: 'number');
+        }
+
+        if (value == '-' && !hasFloat) {
+          return Variable(
+            value: leftNum.toInt() - rightNum.toInt(),
+            type: 'number',
+          );
+        }
+
+        return Variable(
+          value: leftNum.toInt() * rightNum.toInt(),
+          type: 'number',
+        );
+
       case '^':
-        return leftValue ^ rightValue;
+        if (left.type != 'number' || right.type != 'number') {
+          throw SemanticError("Operator '^' expects integer numbers");
+        }
+        return Variable(
+          value: (left.value as int) ^ (right.value as int),
+          type: 'number',
+        );
+
       case 'and':
-        return (leftValue != 0 && rightValue != 0) ? 1 : 0;
+        return Variable(
+          value: _toBoolean(left) && _toBoolean(right),
+          type: 'boolean',
+        );
       case 'or':
-        return (leftValue != 0 || rightValue != 0) ? 1 : 0;
+        return Variable(
+          value: _toBoolean(left) || _toBoolean(right),
+          type: 'boolean',
+        );
+
       case '==':
-        return leftValue == rightValue ? 1 : 0;
+        if (_isNumericType(left.type) && _isNumericType(right.type)) {
+          final leftNum = left.type == 'float'
+              ? left.value as double
+              : left.value as int;
+          final rightNum = right.type == 'float'
+              ? right.value as double
+              : right.value as int;
+          return Variable(value: leftNum == rightNum, type: 'boolean');
+        }
+        return Variable(value: left.value == right.value, type: 'boolean');
+
       case '<':
-        return leftValue < rightValue ? 1 : 0;
       case '>':
-        return leftValue > rightValue ? 1 : 0;
+        if (_isNumericType(left.type) && _isNumericType(right.type)) {
+          final leftNum = left.type == 'float'
+              ? left.value as double
+              : left.value as int;
+          final rightNum = right.type == 'float'
+              ? right.value as double
+              : right.value as int;
+          return Variable(
+            value: value == '<' ? leftNum < rightNum : leftNum > rightNum,
+            type: 'boolean',
+          );
+        }
+        throw SemanticError("Operator '$value' expects numeric operands");
+
       default:
         throw SemanticError("Invalid binary operator '$value'");
     }
@@ -100,8 +348,32 @@ class Identifier extends Node {
   Identifier(String name) : super(name, []);
 
   @override
-  int evaluate(SymbolTable st) {
+  Variable evaluate(SymbolTable st) {
     return st.resolve(value as String);
+  }
+}
+
+class VarDec extends Node {
+  VarDec(String variableType, List<Node> children)
+    : super(variableType, children);
+
+  @override
+  Variable evaluate(SymbolTable st) {
+    final identifier = children[0] as Identifier;
+    final variableType = value as String;
+
+    Variable? initializedValue;
+    if (children.length == 2) {
+      initializedValue = children[1].evaluate(st);
+    }
+
+    st.createVariable(
+      identifier.value as String,
+      variableType,
+      initialValue: initializedValue,
+    );
+
+    return initializedValue ?? st.resolve(identifier.value as String);
   }
 }
 
@@ -109,10 +381,10 @@ class Print extends Node {
   Print(Node expression) : super('print', [expression]);
 
   @override
-  int evaluate(SymbolTable st) {
-    final value = children[0].evaluate(st);
-    print(value);
-    return value;
+  Variable evaluate(SymbolTable st) {
+    final evaluated = children[0].evaluate(st);
+    stdout.writeln(_toStringValue(evaluated));
+    return evaluated;
   }
 }
 
@@ -120,18 +392,27 @@ class Read extends Node {
   Read() : super('read', []);
 
   @override
-  int evaluate(SymbolTable st) {
+  Variable evaluate(SymbolTable st) {
     final input = stdin.readLineSync();
     if (input == null) {
       throw SemanticError('Read failed: no input provided');
     }
 
-    final value = int.tryParse(input.trim());
-    if (value == null) {
-      throw SemanticError("Read expected an integer, found '$input'");
+    final trimmed = input.trim();
+
+    if (trimmed.contains('.')) {
+      final floatValue = double.tryParse(trimmed);
+      if (floatValue != null) {
+        return Variable(value: floatValue, type: 'float');
+      }
     }
 
-    return value;
+    final intValue = int.tryParse(trimmed);
+    if (intValue != null) {
+      return Variable(value: intValue, type: 'number');
+    }
+
+    throw SemanticError("Read expected a number, found '$input'");
   }
 }
 
@@ -142,9 +423,20 @@ class Assignment extends Node {
     : super(variableName, [expression]);
 
   @override
-  int evaluate(SymbolTable st) {
+  Variable evaluate(SymbolTable st) {
     final resolved = children[0].evaluate(st);
-    st.define(value as String, resolved, immutable: immutable);
+
+    if (immutable) {
+      st.createVariable(
+        value as String,
+        resolved.type,
+        initialValue: resolved,
+        immutable: true,
+      );
+      return resolved;
+    }
+
+    st.setVariable(value as String, resolved);
     return resolved;
   }
 }
@@ -153,8 +445,8 @@ class Block extends Node {
   Block(List<Node> statements) : super('block', statements);
 
   @override
-  int evaluate(SymbolTable st) {
-    int result = 0;
+  Variable evaluate(SymbolTable st) {
+    var result = Variable(value: 0, type: 'number');
     for (final stmt in children) {
       result = stmt.evaluate(st);
     }
@@ -172,9 +464,9 @@ class If extends Node {
       );
 
   @override
-  int evaluate(SymbolTable st) {
+  Variable evaluate(SymbolTable st) {
     final conditionValue = children[0].evaluate(st);
-    if (conditionValue != 0) {
+    if (_toBoolean(conditionValue)) {
       return children[1].evaluate(st);
     }
 
@@ -182,7 +474,7 @@ class If extends Node {
       return children[2].evaluate(st);
     }
 
-    return 0;
+    return Variable(value: 0, type: 'number');
   }
 }
 
@@ -190,9 +482,9 @@ class While extends Node {
   While(Node condition, Node block) : super('while', [condition, block]);
 
   @override
-  int evaluate(SymbolTable st) {
-    var result = 0;
-    while (children[0].evaluate(st) != 0) {
+  Variable evaluate(SymbolTable st) {
+    var result = Variable(value: 0, type: 'number');
+    while (_toBoolean(children[0].evaluate(st))) {
       result = children[1].evaluate(st);
     }
     return result;
@@ -204,9 +496,9 @@ class IfExpression extends Node {
     : super('if_expr', [condition, thenExpr, elseExpr]);
 
   @override
-  int evaluate(SymbolTable st) {
+  Variable evaluate(SymbolTable st) {
     final conditionValue = children[0].evaluate(st);
-    if (conditionValue != 0) {
+    if (_toBoolean(conditionValue)) {
       return children[1].evaluate(st);
     }
     return children[2].evaluate(st);
@@ -218,19 +510,34 @@ class For extends Node {
     : super(variableName, [startExpr, endExpr, body]);
 
   @override
-  int evaluate(SymbolTable st) {
-    final start = children[0].evaluate(st);
-    final end = children[1].evaluate(st);
+  Variable evaluate(SymbolTable st) {
+    final startVar = children[0].evaluate(st);
+    final endVar = children[1].evaluate(st);
+
+    if (startVar.type != 'number' || endVar.type != 'number') {
+      throw SemanticError('for loop bounds must be integer numbers');
+    }
+
+    final start = startVar.value as int;
+    final end = endVar.value as int;
+
+    if (!st.exists(value as String)) {
+      st.createVariable(value as String, 'number');
+    }
+
     var iterator = start;
-    var result = 0;
+    var result = Variable(value: 0, type: 'number');
 
     while (iterator <= end) {
-      st.define(value as String, iterator);
+      st.setVariable(
+        value as String,
+        Variable(value: iterator, type: 'number'),
+      );
       result = children[2].evaluate(st);
       iterator++;
     }
 
-    st.define(value as String, iterator);
+    st.setVariable(value as String, Variable(value: iterator, type: 'number'));
     return result;
   }
 }
@@ -239,7 +546,7 @@ class NoOp extends Node {
   NoOp() : super('noop', []);
 
   @override
-  int evaluate(SymbolTable st) => 0;
+  Variable evaluate(SymbolTable st) => Variable(value: 0, type: 'number');
 }
 
 class SemanticError implements Exception {
@@ -273,6 +580,36 @@ class CompilerError implements Exception {
 }
 
 class Prepro {
+  static String _removeLineComments(String code) {
+    final output = StringBuffer();
+    var i = 0;
+    var insideString = false;
+
+    while (i < code.length) {
+      final current = code[i];
+      final next = i + 1 < code.length ? code[i + 1] : '';
+
+      if (current == '"') {
+        insideString = !insideString;
+        output.write(current);
+        i++;
+        continue;
+      }
+
+      if (!insideString && current == '-' && next == '-') {
+        while (i < code.length && code[i] != '\n') {
+          i++;
+        }
+        continue;
+      }
+
+      output.write(current);
+      i++;
+    }
+
+    return output.toString();
+  }
+
   static String _applyConstants(String input, Map<String, String> constants) {
     var result = input;
     final keys = constants.keys.toList()
@@ -287,10 +624,7 @@ class Prepro {
   }
 
   static String filter(String code) {
-    final withoutComments = code.replaceAll(
-      RegExp(r'--.*$', multiLine: true),
-      '',
-    );
+    final withoutComments = _removeLineComments(code);
 
     final constants = <String, String>{};
     final processedLines = <String>[];
@@ -332,46 +666,105 @@ class Prepro {
   }
 }
 
-class SymbolEntry {
-  int value;
-  final bool immutable;
-
-  SymbolEntry({required this.value, required this.immutable});
-}
-
 class SymbolTable {
-  final Map<String, SymbolEntry> table = {};
+  final Map<String, Variable> table = {};
 
-  void define(String name, int value, {bool immutable = false}) {
+  bool _isValidIdentifier(String name) {
+    return RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*$').hasMatch(name);
+  }
+
+  bool _isNumericType(String type) => type == 'number' || type == 'float';
+
+  bool exists(String name) {
+    final trimmedName = name.trim();
+    return table.containsKey(trimmedName);
+  }
+
+  void _assertTypeCompatibility(String expectedType, Variable value) {
+    if (expectedType == value.type) {
+      return;
+    }
+
+    if (_isNumericType(expectedType) && _isNumericType(value.type)) {
+      return;
+    }
+
+    throw SemanticError(
+      "Type mismatch: expected '$expectedType', found '${value.type}'",
+    );
+  }
+
+  Variable _coerceToType(String targetType, Variable input) {
+    if (targetType == input.type) {
+      return input.copy();
+    }
+
+    if (targetType == 'float' && input.type == 'number') {
+      return Variable(value: (input.value as int).toDouble(), type: 'float');
+    }
+
+    if (targetType == 'number' && input.type == 'float') {
+      return Variable(value: (input.value as double).round(), type: 'number');
+    }
+
+    return input.copy();
+  }
+
+  Variable _defaultValueForType(String type) {
+    switch (type) {
+      case 'number':
+        return Variable(value: 0, type: 'number');
+      case 'float':
+        return Variable(value: 0.0, type: 'float');
+      case 'boolean':
+        return Variable(value: false, type: 'boolean');
+      case 'string':
+        return Variable(value: '', type: 'string');
+      default:
+        throw SemanticError("Unsupported type '$type'");
+    }
+  }
+
+  void createVariable(
+    String name,
+    String type, {
+    Variable? initialValue,
+    bool immutable = false,
+  }) {
     final trimmedName = name.trim();
 
     if (trimmedName.isEmpty) {
       throw SemanticError('Identifier name cannot be empty');
     }
 
-    if (!RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*$').hasMatch(trimmedName)) {
+    if (!_isValidIdentifier(trimmedName)) {
       throw SemanticError("Invalid identifier '$name'");
     }
 
     if (table.containsKey(trimmedName)) {
-      final current = table[trimmedName]!;
+      throw SemanticError("Variable '$trimmedName' is already declared");
+    }
 
-      if (immutable) {
-        throw SemanticError("Variable '$trimmedName' is already defined");
-      }
-
-      if (current.immutable) {
-        throw SemanticError("cannot change the value of $trimmedName");
-      }
-
-      current.value = value;
+    if (initialValue != null) {
+      _assertTypeCompatibility(type, initialValue);
+      final coerced = _coerceToType(type, initialValue);
+      table[trimmedName] = Variable(
+        value: coerced.value,
+        type: type,
+        immutable: immutable,
+      );
       return;
     }
 
-    table[trimmedName] = SymbolEntry(value: value, immutable: immutable);
+    final defaultVar = _defaultValueForType(type);
+    table[trimmedName] = Variable(
+      value: defaultVar.value,
+      type: type,
+      immutable: immutable,
+    );
   }
 
-  int resolve(String name) {
+  void setVariable(String name, Variable value) {
     final trimmedName = name.trim();
 
     if (trimmedName.isEmpty) {
@@ -379,10 +772,33 @@ class SymbolTable {
     }
 
     if (!table.containsKey(trimmedName)) {
-      throw SemanticError("Variable '$trimmedName' is not defined");
+      throw SemanticError("Variable '$trimmedName' is not declared");
     }
 
-    return table[trimmedName]!.value;
+    final current = table[trimmedName]!;
+
+    if (current.immutable) {
+      throw SemanticError("cannot change the value of $trimmedName");
+    }
+
+    _assertTypeCompatibility(current.type, value);
+    final coerced = _coerceToType(current.type, value);
+    current.value = coerced.value;
+  }
+
+  Variable resolve(String name) {
+    final trimmedName = name.trim();
+
+    if (trimmedName.isEmpty) {
+      throw SemanticError('Identifier name cannot be empty');
+    }
+
+    if (!table.containsKey(trimmedName)) {
+      throw SemanticError("Variable '$trimmedName' is not declared");
+    }
+
+    final current = table[trimmedName]!;
+    return Variable(value: current.value, type: current.type);
   }
 }
 
@@ -418,6 +834,31 @@ class Lexer {
     }
 
     final currentChar = source[position];
+
+    if (currentChar == '"') {
+      final start = position;
+      position++;
+      final literal = StringBuffer();
+
+      while (position < source.length && source[position] != '"') {
+        literal.write(source[position]);
+        position++;
+      }
+
+      if (position >= source.length) {
+        throw CompilerError(
+          sourceTag: 'Lexer',
+          code: 'E_LEX_UNTERMINATED_STRING',
+          position: start,
+          expression: source,
+          message: 'Unterminated string literal',
+        );
+      }
+
+      position++;
+      next = Token('STR', literal.toString(), start);
+      return;
+    }
 
     if (currentChar == '+') {
       next = Token('PLUS', currentChar, position);
@@ -612,6 +1053,24 @@ class Lexer {
         return;
       }
 
+      if (identifier == 'local') {
+        next = Token('VAR', identifier, start);
+        return;
+      }
+
+      if (identifier == 'true' || identifier == 'false') {
+        next = Token('BOOL', identifier, start);
+        return;
+      }
+
+      if (identifier == 'number' ||
+          identifier == 'boolean' ||
+          identifier == 'string' ||
+          identifier == 'float') {
+        next = Token('TYPE', identifier, start);
+        return;
+      }
+
       next = Token('IDEN', identifier, start);
       return;
     }
@@ -619,12 +1078,30 @@ class Lexer {
     if (int.tryParse(currentChar) != null) {
       final start = position;
       var number = '';
-      while (position < source.length &&
-          int.tryParse(source[position]) != null) {
-        number += source[position];
-        position++;
+      var hasDot = false;
+
+      while (position < source.length) {
+        final ch = source[position];
+        if (int.tryParse(ch) != null) {
+          number += ch;
+          position++;
+          continue;
+        }
+
+        if (ch == '.' && !hasDot) {
+          if (position + 1 < source.length &&
+              int.tryParse(source[position + 1]) != null) {
+            hasDot = true;
+            number += ch;
+            position++;
+            continue;
+          }
+        }
+
+        break;
       }
-      next = Token('INT', number, start);
+
+      next = Token(hasDot ? 'FLOAT' : 'INT', number, start);
       return;
     }
 
@@ -1063,6 +1540,64 @@ class Parser {
       return body;
     }
 
+    if (lexer.next.type == 'VAR') {
+      lexer.selectToken();
+
+      if (lexer.next.type != 'IDEN') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_IDENTIFIER',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected identifier after 'local', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      final identName = lexer.next.value;
+      lexer.selectToken();
+
+      if (lexer.next.type != 'TYPE') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_TYPE',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected type after identifier '$identName', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      final varType = lexer.next.value;
+      lexer.selectToken();
+
+      Node? expr;
+      if (lexer.next.type == 'ASSIGN') {
+        lexer.selectToken();
+        expr = parseBoolExpression();
+      }
+
+      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_EOL',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected end of line after variable declaration, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      if (lexer.next.type == 'EOL') {
+        lexer.selectToken();
+      }
+
+      return VarDec(
+        varType,
+        expr == null ? [Identifier(identName)] : [Identifier(identName), expr],
+      );
+    }
+
     if (lexer.next.type == 'IMUT') {
       lexer.selectToken();
 
@@ -1201,7 +1736,7 @@ class Parser {
       position: lexer.next.position,
       expression: lexer.source,
       message:
-          "Expected statement (if, while, for, assignment, print, or empty line), found '${lexer.next.value}' (${lexer.next.type})",
+          "Expected statement (if, while, for, local declaration, assignment, print, or empty line), found '${lexer.next.value}' (${lexer.next.type})",
     );
   }
 
@@ -1238,6 +1773,25 @@ class Parser {
 
     if (lexer.next.type == 'OPEN_PAR') {
       lexer.selectToken();
+
+      if (lexer.next.type == 'TYPE') {
+        final castType = lexer.next.value;
+        lexer.selectToken();
+
+        if (lexer.next.type != 'CLOSE_PAR') {
+          throw CompilerError(
+            sourceTag: 'Parser',
+            code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+            position: lexer.next.position,
+            expression: lexer.source,
+            message:
+                "Expected ')' after cast type '$castType', found '${lexer.next.value}' (${lexer.next.type})",
+          );
+        }
+        lexer.selectToken();
+        return CastOp(castType, parseFactor());
+      }
+
       Node node = parseBoolExpression();
       if (lexer.next.type != 'CLOSE_PAR') {
         throw CompilerError(
@@ -1345,6 +1899,22 @@ class Parser {
       return node;
     }
 
+    if (lexer.next.type == 'FLOAT') {
+      return _parseFloatLiteral();
+    }
+
+    if (lexer.next.type == 'STR') {
+      final node = StringVal(lexer.next.value);
+      lexer.selectToken();
+      return node;
+    }
+
+    if (lexer.next.type == 'BOOL') {
+      final node = BoolVal(lexer.next.value == 'true');
+      lexer.selectToken();
+      return node;
+    }
+
     if (lexer.next.type == 'IDEN') {
       final identName = lexer.next.value;
       lexer.selectToken();
@@ -1357,11 +1927,28 @@ class Parser {
       position: lexer.next.position,
       expression: lexer.source,
       message:
-          "Expected number, identifier, read(), unary operator (+/-/not), or '(', found '${lexer.next.value}' (${lexer.next.type})",
+          "Expected number, boolean, string, identifier, read(), unary operator (+/-/not), or '(', found '${lexer.next.value}' (${lexer.next.type})",
     );
   }
 
-  int run(String code) {
+  Node _parseFloatLiteral() {
+    Node node = FloatVal(double.parse(lexer.next.value));
+    lexer.selectToken();
+
+    while (lexer.next.type == 'FACT') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_INVALID_FACTORIAL_FLOAT',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message: 'Factorial is only valid for integers',
+      );
+    }
+
+    return node;
+  }
+
+  Variable run(String code) {
     lexer = Lexer(code);
     final root = parseProgram();
 
@@ -1378,6 +1965,32 @@ class Parser {
 
     return root.evaluate(SymbolTable());
   }
+}
+
+bool _toBoolean(Variable variable) {
+  if (variable.type == 'boolean') {
+    return variable.value as bool;
+  }
+
+  if (variable.type == 'number') {
+    return (variable.value as int) != 0;
+  }
+
+  if (variable.type == 'float') {
+    return (variable.value as double) != 0.0;
+  }
+
+  throw SemanticError(
+    "Value of type '${variable.type}' cannot be used as boolean",
+  );
+}
+
+String _toStringValue(Variable variable) {
+  if (variable.type == 'boolean') {
+    return (variable.value as bool) ? 'true' : 'false';
+  }
+
+  return variable.value.toString();
 }
 
 void main(List<String> args) {
