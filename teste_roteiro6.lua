@@ -1,7 +1,7 @@
 -- Base de testes com: while + if + and/or/not + read()
-n = read()
-i = 1
-f = 1
+local n number = read()
+local i number = 1
+local f number = 1
 
 if (not (n < 0) and (n > 1 or n == 1)) then
     while (i < n or i == n) do
