@@ -297,9 +297,15 @@ class BinOp extends Node {
         );
 
       case 'and':
-        return Variable(value: _toBoolean(left) && _toBoolean(right), type: 'boolean');
+        return Variable(
+          value: _toBoolean(left) && _toBoolean(right),
+          type: 'boolean',
+        );
       case 'or':
-        return Variable(value: _toBoolean(left) || _toBoolean(right), type: 'boolean');
+        return Variable(
+          value: _toBoolean(left) || _toBoolean(right),
+          type: 'boolean',
+        );
 
       case '==':
         if (_isNumericType(left.type) && _isNumericType(right.type)) {
@@ -343,7 +349,9 @@ class BinOp extends Node {
             type: 'boolean',
           );
         }
-        throw SemanticError("Operator '$value' expects numeric or string operands");
+        throw SemanticError(
+          "Operator '$value' expects numeric or string operands",
+        );
 
       default:
         throw SemanticError("Invalid binary operator '$value'");
