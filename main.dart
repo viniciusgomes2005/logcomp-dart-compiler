@@ -688,8 +688,6 @@ class SymbolTable {
     return RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*$').hasMatch(name);
   }
 
-  bool _isNumericType(String type) => type == 'number' || type == 'float';
-
   bool exists(String name) {
     final trimmedName = name.trim();
     return table.containsKey(trimmedName);
@@ -700,29 +698,9 @@ class SymbolTable {
       return;
     }
 
-    if (_isNumericType(expectedType) && _isNumericType(value.type)) {
-      return;
-    }
-
     throw SemanticError(
       "Type mismatch: expected '$expectedType', found '${value.type}'",
     );
-  }
-
-  Variable _coerceToType(String targetType, Variable input) {
-    if (targetType == input.type) {
-      return input.copy();
-    }
-
-    if (targetType == 'float' && input.type == 'number') {
-      return Variable(value: (input.value as int).toDouble(), type: 'float');
-    }
-
-    if (targetType == 'number' && input.type == 'float') {
-      return Variable(value: (input.value as double).round(), type: 'number');
-    }
-
-    return input.copy();
   }
 
   Variable _defaultValueForType(String type) {
@@ -762,9 +740,8 @@ class SymbolTable {
 
     if (initialValue != null) {
       _assertTypeCompatibility(type, initialValue);
-      final coerced = _coerceToType(type, initialValue);
       table[trimmedName] = Variable(
-        value: coerced.value,
+        value: initialValue.value,
         type: type,
         immutable: immutable,
       );
@@ -797,8 +774,7 @@ class SymbolTable {
     }
 
     _assertTypeCompatibility(current.type, value);
-    final coerced = _coerceToType(current.type, value);
-    current.value = coerced.value;
+    current.value = value.value;
   }
 
   Variable resolve(String name) {
