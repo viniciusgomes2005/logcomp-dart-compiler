@@ -225,13 +225,6 @@ class BinOp extends Node {
 
     switch (value) {
       case '+':
-        if (left.type == 'string' || right.type == 'string') {
-          return Variable(
-            value: '${_toStringValue(left)}${_toStringValue(right)}',
-            type: 'string',
-          );
-        }
-
         if (_isNumericType(left.type) && _isNumericType(right.type)) {
           final hasFloat = left.type == 'float' || right.type == 'float';
           final leftNum = left.type == 'float'
@@ -242,8 +235,12 @@ class BinOp extends Node {
               : right.value as int;
           return _numericResult(leftNum + rightNum, hasFloat);
         }
-        throw SemanticError(
-          "Operator '+' expects numeric operands or string concatenation",
+        throw SemanticError("Operator '+' expects numeric operands");
+
+      case '..':
+        return Variable(
+          value: '${_toStringValue(left)}${_toStringValue(right)}',
+          type: 'string',
         );
 
       case '-':
@@ -300,15 +297,9 @@ class BinOp extends Node {
         );
 
       case 'and':
-        return Variable(
-          value: _toBoolean(left) && _toBoolean(right),
-          type: 'boolean',
-        );
+        return Variable(value: _toBoolean(left) && _toBoolean(right), type: 'boolean');
       case 'or':
-        return Variable(
-          value: _toBoolean(left) || _toBoolean(right),
-          type: 'boolean',
-        );
+        return Variable(value: _toBoolean(left) || _toBoolean(right), type: 'boolean');
 
       case '==':
         if (_isNumericType(left.type) && _isNumericType(right.type)) {
@@ -320,7 +311,13 @@ class BinOp extends Node {
               : right.value as int;
           return Variable(value: leftNum == rightNum, type: 'boolean');
         }
-        return Variable(value: left.value == right.value, type: 'boolean');
+        if (left.type == right.type &&
+            (left.type == 'string' || left.type == 'boolean')) {
+          return Variable(value: left.value == right.value, type: 'boolean');
+        }
+        throw SemanticError(
+          "Operator '==' expects both sides with compatible types",
+        );
 
       case '<':
       case '>':
@@ -336,7 +333,17 @@ class BinOp extends Node {
             type: 'boolean',
           );
         }
-        throw SemanticError("Operator '$value' expects numeric operands");
+        if (left.type == 'string' && right.type == 'string') {
+          final leftStr = left.value as String;
+          final rightStr = right.value as String;
+          return Variable(
+            value: value == '<'
+                ? leftStr.compareTo(rightStr) < 0
+                : leftStr.compareTo(rightStr) > 0,
+            type: 'boolean',
+          );
+        }
+        throw SemanticError("Operator '$value' expects numeric or string operands");
 
       default:
         throw SemanticError("Invalid binary operator '$value'");
@@ -895,6 +902,14 @@ class Lexer {
       return;
     }
 
+    if (currentChar == '.') {
+      if (position + 1 < source.length && source[position + 1] == '.') {
+        next = Token('CONCAT', '..', position);
+        position += 2;
+        return;
+      }
+    }
+
     if (currentChar == '(') {
       next = Token('OPEN_PAR', currentChar, position);
       position++;
@@ -1124,7 +1139,8 @@ class Parser {
 
     while (lexer.next.type == 'PLUS' ||
         lexer.next.type == 'MINUS' ||
-        lexer.next.type == 'XOR') {
+        lexer.next.type == 'XOR' ||
+        lexer.next.type == 'CONCAT') {
       final op = lexer.next.value;
       lexer.selectToken();
       node = BinOp(op, node, parseTerm());
@@ -1970,14 +1986,6 @@ class Parser {
 bool _toBoolean(Variable variable) {
   if (variable.type == 'boolean') {
     return variable.value as bool;
-  }
-
-  if (variable.type == 'number') {
-    return (variable.value as int) != 0;
-  }
-
-  if (variable.type == 'float') {
-    return (variable.value as double) != 0.0;
   }
 
   throw SemanticError(
