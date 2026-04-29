@@ -25,6 +25,19 @@ class Variable {
       Variable(value: value, type: type, immutable: immutable, shift: shift);
 }
 
+class Parameter {
+  final String name;
+  final String type;
+
+  Parameter(this.name, this.type);
+}
+
+class ReturnSignal implements Exception {
+  final Variable value;
+
+  ReturnSignal(this.value);
+}
+
 class Code {
   static final List<String> instructions = [];
 
@@ -882,6 +895,103 @@ class IfExpression extends Node {
   }
 }
 
+class FunctionDec extends Node {
+  final String name;
+  final List<Parameter> parameters;
+  final String? returnType;
+
+  FunctionDec(this.name, this.parameters, this.returnType, Node body)
+    : super('function', [body]);
+
+  @override
+  Variable evaluate(SymbolTable st) {
+    st.defineFunction(name, this);
+    return Variable(value: 0, type: 'number');
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    throw SemanticError('Assembly generation does not support functions');
+  }
+}
+
+class FunctionCall extends Node {
+  final String name;
+
+  FunctionCall(this.name, List<Node> arguments)
+    : super('function_call', arguments);
+
+  @override
+  Variable evaluate(SymbolTable st) {
+    final function = st.resolveFunction(name);
+
+    if (function.parameters.length != children.length) {
+      throw SemanticError(
+        "Function '$name' expects ${function.parameters.length} arguments, found ${children.length}",
+      );
+    }
+
+    final evaluatedArgs = <Variable>[];
+    for (final argument in children) {
+      evaluatedArgs.add(argument.evaluate(st));
+    }
+
+    final functionScope = st.createChild();
+    for (var i = 0; i < function.parameters.length; i++) {
+      final parameter = function.parameters[i];
+      final argument = evaluatedArgs[i];
+      if (parameter.type != argument.type) {
+        throw SemanticError(
+          "Type mismatch: expected '${parameter.type}', found '${argument.type}'",
+        );
+      }
+      functionScope.createVariable(
+        parameter.name,
+        parameter.type,
+        initialValue: argument,
+      );
+    }
+
+    try {
+      function.children[0].evaluate(functionScope);
+    } on ReturnSignal catch (signal) {
+      if (function.returnType != null &&
+          function.returnType != signal.value.type) {
+        throw SemanticError(
+          "Type mismatch: expected '${function.returnType}', found '${signal.value.type}'",
+        );
+      }
+      return signal.value;
+    }
+
+    if (function.returnType != null) {
+      throw SemanticError("Function '$name' did not return a value");
+    }
+
+    return Variable(value: 0, type: 'number');
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    throw SemanticError('Assembly generation does not support functions');
+  }
+}
+
+class Return extends Node {
+  Return(Node expression) : super('return', [expression]);
+
+  @override
+  Variable evaluate(SymbolTable st) {
+    final result = children[0].evaluate(st);
+    throw ReturnSignal(result);
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    throw SemanticError('Assembly generation does not support functions');
+  }
+}
+
 class For extends Node {
   For(String variableName, Node startExpr, Node endExpr, Node body)
     : super(variableName, [startExpr, endExpr, body]);
@@ -1052,8 +1162,15 @@ class Prepro {
 }
 
 class SymbolTable {
+  final SymbolTable? parent;
+  final Map<String, FunctionDec> functions;
   final Map<String, Variable> table = {};
   int _nextShift = 0;
+
+  SymbolTable({this.parent, Map<String, FunctionDec>? functions})
+    : functions = functions ?? parent?.functions ?? {};
+
+  SymbolTable createChild() => SymbolTable(parent: this, functions: functions);
 
   bool _isValidIdentifier(String name) {
     return RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*$').hasMatch(name);
@@ -1061,7 +1178,25 @@ class SymbolTable {
 
   bool exists(String name) {
     final trimmedName = name.trim();
-    return table.containsKey(trimmedName);
+    return table.containsKey(trimmedName) ||
+        (parent?.exists(trimmedName) ?? false);
+  }
+
+  void defineFunction(String name, FunctionDec function) {
+    final trimmedName = name.trim();
+    if (functions.containsKey(trimmedName)) {
+      throw SemanticError("Function '$trimmedName' is already declared");
+    }
+    functions[trimmedName] = function;
+  }
+
+  FunctionDec resolveFunction(String name) {
+    final trimmedName = name.trim();
+    final function = functions[trimmedName];
+    if (function == null) {
+      throw SemanticError("Function '$trimmedName' is not declared");
+    }
+    return function;
   }
 
   void _assertTypeCompatibility(String expectedType, Variable value) {
@@ -1139,6 +1274,10 @@ class SymbolTable {
     }
 
     if (!table.containsKey(trimmedName)) {
+      if (parent != null && parent!.exists(trimmedName)) {
+        parent!.setVariable(trimmedName, value);
+        return;
+      }
       throw SemanticError("Variable '$trimmedName' is not declared");
     }
 
@@ -1160,6 +1299,9 @@ class SymbolTable {
     }
 
     if (!table.containsKey(trimmedName)) {
+      if (parent != null && parent!.exists(trimmedName)) {
+        return parent!.resolve(trimmedName);
+      }
       throw SemanticError("Variable '$trimmedName' is not declared");
     }
 
@@ -1372,6 +1514,16 @@ class Lexer {
         return;
       }
 
+      if (identifier == 'function') {
+        next = Token('FUNCTION', identifier, start);
+        return;
+      }
+
+      if (identifier == 'return') {
+        next = Token('RETURN', identifier, start);
+        return;
+      }
+
       if (identifier == 'if') {
         next = Token('IF', identifier, start);
         return;
@@ -1567,6 +1719,66 @@ class Parser {
     );
   }
 
+  void _consumeStatementTerminator(String statementName) {
+    if (lexer.next.type == 'EOL') {
+      lexer.selectToken();
+      return;
+    }
+
+    if (lexer.next.type == 'EOF' ||
+        lexer.next.type == 'CLOSE_BRA' ||
+        lexer.next.type == 'ELSE') {
+      return;
+    }
+
+    throw CompilerError(
+      sourceTag: 'Parser',
+      code: 'E_PAR_EXPECTED_EOL',
+      position: lexer.next.position,
+      expression: lexer.source,
+      message:
+          "Expected end of line after $statementName, found '${lexer.next.value}' (${lexer.next.type})",
+    );
+  }
+
+  FunctionCall _parseFunctionCallAfterName(String name) {
+    if (lexer.next.type != 'OPEN_PAR') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_OPEN_PAREN',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected '(' after function name '$name', found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+    lexer.selectToken();
+
+    final arguments = <Node>[];
+    if (lexer.next.type != 'CLOSE_PAR') {
+      arguments.add(parseBoolExpression());
+
+      while (lexer.next.type == 'COMMA') {
+        lexer.selectToken();
+        arguments.add(parseBoolExpression());
+      }
+    }
+
+    if (lexer.next.type != 'CLOSE_PAR') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected ')' after function call arguments, found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+    lexer.selectToken();
+
+    return FunctionCall(name, arguments);
+  }
+
   Node parseBoolExpression() {
     Node node = parseBoolTerm();
 
@@ -1609,6 +1821,116 @@ class Parser {
     if (lexer.next.type == 'EOL') {
       lexer.selectToken();
       return NoOp();
+    }
+
+    if (lexer.next.type == 'FUNCTION') {
+      lexer.selectToken();
+
+      if (lexer.next.type != 'IDEN') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_IDENTIFIER',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected function name, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      final functionName = lexer.next.value;
+      lexer.selectToken();
+
+      if (lexer.next.type != 'OPEN_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_OPEN_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected '(' after function name '$functionName', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      final parameters = <Parameter>[];
+      if (lexer.next.type != 'CLOSE_PAR') {
+        while (true) {
+          if (lexer.next.type != 'IDEN') {
+            throw CompilerError(
+              sourceTag: 'Parser',
+              code: 'E_PAR_EXPECTED_IDENTIFIER',
+              position: lexer.next.position,
+              expression: lexer.source,
+              message:
+                  "Expected parameter name, found '${lexer.next.value}' (${lexer.next.type})",
+            );
+          }
+          final parameterName = lexer.next.value;
+          lexer.selectToken();
+
+          if (lexer.next.type != 'TYPE') {
+            throw CompilerError(
+              sourceTag: 'Parser',
+              code: 'E_PAR_EXPECTED_TYPE',
+              position: lexer.next.position,
+              expression: lexer.source,
+              message:
+                  "Expected type after parameter '$parameterName', found '${lexer.next.value}' (${lexer.next.type})",
+            );
+          }
+          parameters.add(Parameter(parameterName, lexer.next.value));
+          lexer.selectToken();
+
+          if (lexer.next.type != 'COMMA') {
+            break;
+          }
+          lexer.selectToken();
+        }
+      }
+
+      if (lexer.next.type != 'CLOSE_PAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected ')' after function parameters, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      String? returnType;
+      if (lexer.next.type == 'TYPE') {
+        returnType = lexer.next.value;
+        lexer.selectToken();
+      }
+
+      _consumeOptionalBlockStartEol();
+
+      final body = parseBlock(['CLOSE_BRA']);
+
+      if (lexer.next.type != 'CLOSE_BRA') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_END',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected 'end' to close function '$functionName', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+      _consumeBlockTerminator('function');
+
+      return FunctionDec(functionName, parameters, returnType, body);
+    }
+
+    if (lexer.next.type == 'RETURN') {
+      lexer.selectToken();
+      final expression = parseBoolExpression();
+      _consumeStatementTerminator('return statement');
+      return Return(expression);
     }
 
     if (lexer.next.type == 'IF') {
@@ -1977,6 +2299,12 @@ class Parser {
       final identName = lexer.next.value;
       lexer.selectToken();
 
+      if (lexer.next.type == 'OPEN_PAR') {
+        final call = _parseFunctionCallAfterName(identName);
+        _consumeStatementTerminator('function call');
+        return call;
+      }
+
       if (lexer.next.type != 'ASSIGN') {
         throw CompilerError(
           sourceTag: 'Parser',
@@ -2244,6 +2572,9 @@ class Parser {
     if (lexer.next.type == 'IDEN') {
       final identName = lexer.next.value;
       lexer.selectToken();
+      if (lexer.next.type == 'OPEN_PAR') {
+        return _parseFunctionCallAfterName(identName);
+      }
       return Identifier(identName);
     }
 
@@ -2323,7 +2654,7 @@ bool _toBoolean(Variable variable) {
 
 String _toStringValue(Variable variable) {
   if (variable.type == 'boolean') {
-    return (variable.value as bool) ? 'true' : 'false';
+    return (variable.value as bool) ? '1' : '0';
   }
 
   return variable.value.toString();
@@ -2443,6 +2774,20 @@ String inferType(Node node, SymbolTable st) {
   throw SemanticError('Cannot infer type for ${node.runtimeType}');
 }
 
+bool containsNode(Node node, bool Function(Node node) predicate) {
+  if (predicate(node)) {
+    return true;
+  }
+
+  for (final child in node.children) {
+    if (containsNode(child, predicate)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void main(List<String> args) {
   if (args.isEmpty) {
     stdout.writeln(
@@ -2468,14 +2813,28 @@ void main(List<String> args) {
   try {
     if (isFileInput) {
       final root = parser.parse(code);
-      Code.reset();
-      root.generate(SymbolTable());
-      final lastDot = inputFile.path.lastIndexOf('.');
-      final lastSeparator = inputFile.path.lastIndexOf(Platform.pathSeparator);
-      final asmPath = lastDot > lastSeparator
-          ? inputFile.path.replaceFirst(RegExp(r'\.[^.]*$'), '.asm')
-          : '${inputFile.path}.asm';
-      Code.dump(asmPath);
+      final hasRead = containsNode(root, (node) => node is Read);
+      final hasFunctions = containsNode(
+        root,
+        (node) => node is FunctionDec || node is FunctionCall || node is Return,
+      );
+
+      if (!hasRead) {
+        root.evaluate(SymbolTable());
+      }
+
+      if (!hasFunctions) {
+        Code.reset();
+        root.generate(SymbolTable());
+        final lastDot = inputFile.path.lastIndexOf('.');
+        final lastSeparator = inputFile.path.lastIndexOf(
+          Platform.pathSeparator,
+        );
+        final asmPath = lastDot > lastSeparator
+            ? inputFile.path.replaceFirst(RegExp(r'\.[^.]*$'), '.asm')
+            : '${inputFile.path}.asm';
+        Code.dump(asmPath);
+      }
     } else {
       parser.run(code);
     }
