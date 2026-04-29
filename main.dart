@@ -1539,6 +1539,34 @@ class Parser {
     return Block(statements);
   }
 
+  void _consumeOptionalBlockStartEol() {
+    if (lexer.next.type == 'EOL') {
+      lexer.selectToken();
+    }
+  }
+
+  void _consumeBlockTerminator(String blockName) {
+    if (lexer.next.type == 'EOL') {
+      lexer.selectToken();
+      return;
+    }
+
+    if (lexer.next.type == 'EOF' ||
+        lexer.next.type == 'CLOSE_BRA' ||
+        lexer.next.type == 'ELSE') {
+      return;
+    }
+
+    throw CompilerError(
+      sourceTag: 'Parser',
+      code: 'E_PAR_EXPECTED_EOL',
+      position: lexer.next.position,
+      expression: lexer.source,
+      message:
+          "Expected end of line after $blockName block, found '${lexer.next.value}' (${lexer.next.type})",
+    );
+  }
+
   Node parseBoolExpression() {
     Node node = parseBoolTerm();
 
@@ -1669,20 +1697,7 @@ class Parser {
       }
       lexer.selectToken();
 
-      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_EOL',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected end of line after if block, found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-
-      if (lexer.next.type == 'EOL') {
-        lexer.selectToken();
-      }
+      _consumeBlockTerminator('if');
 
       return If(condition, thenBlock, elseBlock);
     }
@@ -1728,17 +1743,7 @@ class Parser {
       }
       lexer.selectToken();
 
-      if (lexer.next.type != 'EOL') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_EOL',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected end of line after 'do', found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-      lexer.selectToken();
+      _consumeOptionalBlockStartEol();
 
       final body = parseBlock(['CLOSE_BRA']);
 
@@ -1754,20 +1759,7 @@ class Parser {
       }
       lexer.selectToken();
 
-      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_EOL',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected end of line after while block, found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-
-      if (lexer.next.type == 'EOL') {
-        lexer.selectToken();
-      }
+      _consumeBlockTerminator('while');
 
       return While(condition, body);
     }
@@ -1829,17 +1821,7 @@ class Parser {
       }
       lexer.selectToken();
 
-      if (lexer.next.type != 'EOL') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_EOL',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected end of line after 'do', found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-      lexer.selectToken();
+      _consumeOptionalBlockStartEol();
 
       final body = parseBlock(['CLOSE_BRA']);
 
@@ -1855,20 +1837,7 @@ class Parser {
       }
       lexer.selectToken();
 
-      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_EOL',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected end of line after for block, found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-
-      if (lexer.next.type == 'EOL') {
-        lexer.selectToken();
-      }
+      _consumeBlockTerminator('for');
 
       return For(loopVar, startExpr, endExpr, body);
     }
@@ -1876,17 +1845,7 @@ class Parser {
     if (lexer.next.type == 'OPEN_BRA') {
       lexer.selectToken();
 
-      if (lexer.next.type != 'EOL') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_EOL',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected end of line after 'do', found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-      lexer.selectToken();
+      _consumeOptionalBlockStartEol();
 
       final body = parseBlock(['CLOSE_BRA']);
 
@@ -1902,20 +1861,7 @@ class Parser {
       }
       lexer.selectToken();
 
-      if (lexer.next.type != 'EOL' && lexer.next.type != 'EOF') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_EOL',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected end of line after do block, found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-
-      if (lexer.next.type == 'EOL') {
-        lexer.selectToken();
-      }
+      _consumeBlockTerminator('do');
 
       return body;
     }
