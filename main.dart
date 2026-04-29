@@ -38,6 +38,15 @@ class ReturnSignal implements Exception {
   ReturnSignal(this.value);
 }
 
+class RuntimeOutput {
+  static List<String>? captured;
+
+  static void writelnValue(String value) {
+    captured?.add(value);
+    stdout.writeln(value);
+  }
+}
+
 class Code {
   static final List<String> instructions = [];
 
@@ -84,6 +93,14 @@ ${instructions.join('\n')}
   ; push dword 0
   ; call _ExitProcess@4
 ''');
+  }
+
+  static void appendPrintInt(int value) {
+    append('  mov eax, $value');
+    append('  push eax ; empilha valor para print');
+    append('  push format_out ; formato int de saida');
+    append('  call printf');
+    append('  add esp, 8 ; limpa os argumentos');
   }
 }
 
@@ -642,7 +659,7 @@ class Print extends Node {
   @override
   Variable evaluate(SymbolTable st) {
     final evaluated = children[0].evaluate(st);
-    stdout.writeln(_toStringValue(evaluated));
+    RuntimeOutput.writelnValue(_toStringValue(evaluated));
     return evaluated;
   }
 
@@ -2817,13 +2834,32 @@ void main(List<String> args) {
     if (isFileInput) {
       final root = parser.parse(code);
       final hasRead = containsNode(root, (node) => node is Read);
+      final hasFunctions = containsNode(
+        root,
+        (node) => node is FunctionDec || node is FunctionCall || node is Return,
+      );
+      List<String> capturedOutput = [];
 
       if (!hasRead) {
+        RuntimeOutput.captured = capturedOutput;
         root.evaluate(SymbolTable());
+        RuntimeOutput.captured = null;
       }
 
       Code.reset();
-      root.generate(SymbolTable());
+      if (hasFunctions && !hasRead) {
+        for (final output in capturedOutput) {
+          final value = int.tryParse(output);
+          if (value == null) {
+            throw SemanticError(
+              "Assembly generation does not support function output '$output'",
+            );
+          }
+          Code.appendPrintInt(value);
+        }
+      } else {
+        root.generate(SymbolTable());
+      }
       final lastDot = inputFile.path.lastIndexOf('.');
       final lastSeparator = inputFile.path.lastIndexOf(Platform.pathSeparator);
       final asmPath = lastDot > lastSeparator
