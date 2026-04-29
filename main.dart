@@ -12,19 +12,86 @@ class Variable {
   dynamic value;
   final String type;
   final bool immutable;
+  final int shift;
 
-  Variable({required this.value, required this.type, this.immutable = false});
+  Variable({
+    required this.value,
+    required this.type,
+    this.immutable = false,
+    this.shift = 0,
+  });
 
-  Variable copy() => Variable(value: value, type: type, immutable: immutable);
+  Variable copy() =>
+      Variable(value: value, type: type, immutable: immutable, shift: shift);
+}
+
+class Code {
+  static final List<String> instructions = [];
+
+  static void reset() {
+    instructions.clear();
+  }
+
+  static void append(String code) {
+    instructions.add(code);
+  }
+
+  static void dump(String filename) {
+    final file = File(filename);
+    file.writeAsStringSync('''
+section .data
+  format_out: db "%d", 10, 0 ; format do printf
+  format_in: db "%d", 0 ; format do scanf
+  scan_int: dd 0; 32-bits integer
+
+section .text
+  extern printf ; usar _printf para Windows
+  extern scanf ; usar _scanf para Windows
+  ; extern _ExitProcess@4 ; usar para Windows
+  global _start ; início do programa
+
+_start:
+  push ebp ; guarda o EBP
+  mov ebp, esp ; zera a pilha
+
+  ; aqui começa o codigo gerado:
+
+${instructions.join('\n')}
+
+  ; aqui termina o código gerado
+
+  mov esp, ebp ; reestabelece a pilha
+  pop ebp
+
+  ; chamada da interrupcao de saida (Linux)
+  mov eax, 1
+  xor ebx, ebx
+  int 0x80
+  ; Para Windows:
+  ; push dword 0
+  ; call _ExitProcess@4
+''');
+  }
 }
 
 abstract class Node {
+  static int id = 0;
+
+  static int newId() {
+    id++;
+    return id;
+  }
+
   final dynamic value;
   final List<Node> children;
+  late final int uniqueId;
 
-  Node(this.value, [List<Node>? children]) : children = children ?? [];
+  Node(this.value, [List<Node>? children])
+    : children = children ?? [],
+      uniqueId = Node.newId();
 
   Variable evaluate(SymbolTable st);
+  void generate(SymbolTable st);
 }
 
 class IntVal extends Node {
@@ -33,6 +100,11 @@ class IntVal extends Node {
   @override
   Variable evaluate(SymbolTable st) =>
       Variable(value: value as int, type: 'number');
+
+  @override
+  void generate(SymbolTable st) {
+    Code.append('  mov eax, $value');
+  }
 }
 
 class FloatVal extends Node {
@@ -41,6 +113,11 @@ class FloatVal extends Node {
   @override
   Variable evaluate(SymbolTable st) =>
       Variable(value: value as double, type: 'float');
+
+  @override
+  void generate(SymbolTable st) {
+    throw SemanticError('Assembly generation does not support float values');
+  }
 }
 
 class BoolVal extends Node {
@@ -49,6 +126,11 @@ class BoolVal extends Node {
   @override
   Variable evaluate(SymbolTable st) =>
       Variable(value: value as bool, type: 'boolean');
+
+  @override
+  void generate(SymbolTable st) {
+    Code.append('  mov eax, ${value == true ? 1 : 0}');
+  }
 }
 
 class StringVal extends Node {
@@ -57,6 +139,11 @@ class StringVal extends Node {
   @override
   Variable evaluate(SymbolTable st) =>
       Variable(value: value as String, type: 'string');
+
+  @override
+  void generate(SymbolTable st) {
+    throw SemanticError('Assembly generation does not support strings');
+  }
 }
 
 class UnOp extends Node {
@@ -103,6 +190,31 @@ class UnOp extends Node {
           );
         }
         return Variable(value: _factorial(n), type: 'number');
+      default:
+        throw SemanticError("Invalid unary operator '$value'");
+    }
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    if (value == '!') {
+      throw SemanticError('Assembly generation does not support factorial');
+    }
+
+    children[0].generate(st);
+
+    switch (value) {
+      case '+':
+        break;
+      case '-':
+        Code.append('  neg eax');
+        break;
+      case 'not':
+        Code.append('  cmp eax, 0');
+        Code.append('  mov eax, 0');
+        Code.append('  mov ecx, 1');
+        Code.append('  cmove eax, ecx');
+        break;
       default:
         throw SemanticError("Invalid unary operator '$value'");
     }
@@ -203,6 +315,11 @@ class CastOp extends Node {
     throw SemanticError(
       "Cannot cast value of type '${input.type}' to '$target'",
     );
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    throw SemanticError('Assembly generation does not support casts');
   }
 }
 
@@ -357,6 +474,75 @@ class BinOp extends Node {
         throw SemanticError("Invalid binary operator '$value'");
     }
   }
+
+  @override
+  void generate(SymbolTable st) {
+    if (value == '..') {
+      throw SemanticError('Assembly generation does not support strings');
+    }
+
+    children[1].generate(st);
+    Code.append('  push eax');
+    children[0].generate(st);
+    Code.append('  pop ecx');
+
+    switch (value) {
+      case '+':
+        Code.append('  add eax, ecx');
+        break;
+      case '-':
+        Code.append('  sub eax, ecx');
+        break;
+      case '*':
+        Code.append('  imul ecx');
+        break;
+      case '/':
+        Code.append('  cdq');
+        Code.append('  idiv ecx');
+        break;
+      case '^':
+        Code.append('  xor eax, ecx');
+        break;
+      case 'and':
+        Code.append('  cmp eax, 0');
+        Code.append('  setne al');
+        Code.append('  movzx eax, al');
+        Code.append('  cmp ecx, 0');
+        Code.append('  setne cl');
+        Code.append('  movzx ecx, cl');
+        Code.append('  and eax, ecx');
+        break;
+      case 'or':
+        Code.append('  cmp eax, 0');
+        Code.append('  setne al');
+        Code.append('  movzx eax, al');
+        Code.append('  cmp ecx, 0');
+        Code.append('  setne cl');
+        Code.append('  movzx ecx, cl');
+        Code.append('  or eax, ecx');
+        break;
+      case '==':
+        Code.append('  cmp eax, ecx');
+        Code.append('  mov eax, 0');
+        Code.append('  mov ecx, 1');
+        Code.append('  cmove eax, ecx');
+        break;
+      case '<':
+        Code.append('  cmp eax, ecx');
+        Code.append('  mov eax, 0');
+        Code.append('  mov ecx, 1');
+        Code.append('  cmovl eax, ecx');
+        break;
+      case '>':
+        Code.append('  cmp eax, ecx');
+        Code.append('  mov eax, 0');
+        Code.append('  mov ecx, 1');
+        Code.append('  cmovg eax, ecx');
+        break;
+      default:
+        throw SemanticError("Invalid binary operator '$value'");
+    }
+  }
 }
 
 class Identifier extends Node {
@@ -365,6 +551,12 @@ class Identifier extends Node {
   @override
   Variable evaluate(SymbolTable st) {
     return st.resolve(value as String);
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    final variable = st.resolve(value as String);
+    Code.append('  mov eax, [ebp-${variable.shift}] ; recupera $value');
   }
 }
 
@@ -390,6 +582,45 @@ class VarDec extends Node {
 
     return initializedValue ?? st.resolve(identifier.value as String);
   }
+
+  @override
+  void generate(SymbolTable st) {
+    final identifier = children[0] as Identifier;
+    final variableType = value as String;
+
+    if (variableType != 'number' && variableType != 'boolean') {
+      throw SemanticError(
+        "Assembly generation does not support variables of type '$variableType'",
+      );
+    }
+
+    if (children.length == 2) {
+      final expressionType = inferType(children[1], st);
+      if (expressionType != variableType) {
+        throw SemanticError(
+          "Type mismatch: expected '$variableType', found '$expressionType'",
+        );
+      }
+    }
+
+    st.createVariable(identifier.value as String, variableType);
+    final variable = st.resolve(identifier.value as String);
+    Code.append(
+      '  sub esp, 4 ; var ${identifier.value} ${variable.type} [EBP-${variable.shift}]',
+    );
+
+    if (children.length == 2) {
+      children[1].generate(st);
+      Code.append(
+        '  mov [ebp-${variable.shift}], eax ; ${identifier.value} = EAX',
+      );
+    } else {
+      Code.append('  mov eax, 0');
+      Code.append(
+        '  mov [ebp-${variable.shift}], eax ; ${identifier.value} = 0',
+      );
+    }
+  }
 }
 
 class Print extends Node {
@@ -400,6 +631,15 @@ class Print extends Node {
     final evaluated = children[0].evaluate(st);
     stdout.writeln(_toStringValue(evaluated));
     return evaluated;
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    children[0].generate(st);
+    Code.append('  push eax ; empilha valor para print');
+    Code.append('  push format_out ; formato int de saida');
+    Code.append('  call printf');
+    Code.append('  add esp, 8 ; limpa os argumentos');
   }
 }
 
@@ -429,6 +669,15 @@ class Read extends Node {
 
     throw SemanticError("Read expected a number, found '$input'");
   }
+
+  @override
+  void generate(SymbolTable st) {
+    Code.append('  push scan_int ; endereço de memória de suporte');
+    Code.append('  push format_in ; formato de entrada (int)');
+    Code.append('  call scanf');
+    Code.append('  add esp, 8 ; Remove os argumentos da pilha');
+    Code.append('  mov eax, dword [scan_int] ; retorna o valor lido em EAX');
+  }
 }
 
 class Assignment extends Node {
@@ -454,6 +703,43 @@ class Assignment extends Node {
     st.setVariable(value as String, resolved);
     return resolved;
   }
+
+  @override
+  void generate(SymbolTable st) {
+    if (immutable) {
+      final expressionType = inferType(children[0], st);
+      if (expressionType != 'number' && expressionType != 'boolean') {
+        throw SemanticError(
+          "Assembly generation does not support immutable variables of type '$expressionType'",
+        );
+      }
+
+      children[0].generate(st);
+      st.createVariable(
+        value as String,
+        expressionType,
+        initialValue: Variable(value: 0, type: expressionType),
+        immutable: true,
+      );
+      final variable = st.resolve(value as String);
+      Code.append(
+        '  sub esp, 4 ; var $value ${variable.type} [EBP-${variable.shift}]',
+      );
+      Code.append('  mov [ebp-${variable.shift}], eax ; $value = EAX');
+      return;
+    }
+
+    final variable = st.resolve(value as String);
+    final expressionType = inferType(children[0], st);
+    if (expressionType != variable.type) {
+      throw SemanticError(
+        "Type mismatch: expected '${variable.type}', found '$expressionType'",
+      );
+    }
+
+    children[0].generate(st);
+    Code.append('  mov [ebp-${variable.shift}], eax ; $value = EAX');
+  }
 }
 
 class Block extends Node {
@@ -466,6 +752,13 @@ class Block extends Node {
       result = stmt.evaluate(st);
     }
     return result;
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    for (final stmt in children) {
+      stmt.generate(st);
+    }
   }
 }
 
@@ -491,6 +784,32 @@ class If extends Node {
 
     return Variable(value: 0, type: 'number');
   }
+
+  @override
+  void generate(SymbolTable st) {
+    final elseLabel = 'else_$uniqueId';
+    final exitLabel = 'exit_$uniqueId';
+
+    final conditionType = inferType(children[0], st);
+    if (conditionType != 'boolean') {
+      throw SemanticError(
+        "Value of type '$conditionType' cannot be used as boolean",
+      );
+    }
+
+    children[0].generate(st);
+    Code.append('  cmp eax, 0 ; se a condição for falsa, sai');
+    Code.append(children.length == 3 ? '  je $elseLabel' : '  je $exitLabel');
+    children[1].generate(st);
+
+    if (children.length == 3) {
+      Code.append('  jmp $exitLabel');
+      Code.append('$elseLabel:');
+      children[2].generate(st);
+    }
+
+    Code.append('$exitLabel:');
+  }
 }
 
 class While extends Node {
@@ -503,6 +822,27 @@ class While extends Node {
       result = children[1].evaluate(st);
     }
     return result;
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    final loopLabel = 'loop_$uniqueId';
+    final exitLabel = 'exit_$uniqueId';
+
+    final conditionType = inferType(children[0], st);
+    if (conditionType != 'boolean') {
+      throw SemanticError(
+        "Value of type '$conditionType' cannot be used as boolean",
+      );
+    }
+
+    Code.append('$loopLabel: ; label do loop');
+    children[0].generate(st);
+    Code.append('  cmp eax, 0 ; se a condição for falsa, sai');
+    Code.append('  je $exitLabel');
+    children[1].generate(st);
+    Code.append('  jmp $loopLabel');
+    Code.append('$exitLabel:');
   }
 }
 
@@ -517,6 +857,28 @@ class IfExpression extends Node {
       return children[1].evaluate(st);
     }
     return children[2].evaluate(st);
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    final elseLabel = 'else_expr_$uniqueId';
+    final exitLabel = 'exit_expr_$uniqueId';
+
+    final conditionType = inferType(children[0], st);
+    if (conditionType != 'boolean') {
+      throw SemanticError(
+        "Value of type '$conditionType' cannot be used as boolean",
+      );
+    }
+
+    children[0].generate(st);
+    Code.append('  cmp eax, 0');
+    Code.append('  je $elseLabel');
+    children[1].generate(st);
+    Code.append('  jmp $exitLabel');
+    Code.append('$elseLabel:');
+    children[2].generate(st);
+    Code.append('$exitLabel:');
   }
 }
 
@@ -555,6 +917,11 @@ class For extends Node {
     st.setVariable(value as String, Variable(value: iterator, type: 'number'));
     return result;
   }
+
+  @override
+  void generate(SymbolTable st) {
+    throw SemanticError('Assembly generation does not support for loops');
+  }
 }
 
 class NoOp extends Node {
@@ -562,6 +929,9 @@ class NoOp extends Node {
 
   @override
   Variable evaluate(SymbolTable st) => Variable(value: 0, type: 'number');
+
+  @override
+  void generate(SymbolTable st) {}
 }
 
 class SemanticError implements Exception {
@@ -683,6 +1053,7 @@ class Prepro {
 
 class SymbolTable {
   final Map<String, Variable> table = {};
+  int _nextShift = 0;
 
   bool _isValidIdentifier(String name) {
     return RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*$').hasMatch(name);
@@ -738,12 +1109,15 @@ class SymbolTable {
       throw SemanticError("Variable '$trimmedName' is already declared");
     }
 
+    _nextShift += 4;
+
     if (initialValue != null) {
       _assertTypeCompatibility(type, initialValue);
       table[trimmedName] = Variable(
         value: initialValue.value,
         type: type,
         immutable: immutable,
+        shift: _nextShift,
       );
       return;
     }
@@ -753,6 +1127,7 @@ class SymbolTable {
       value: defaultVar.value,
       type: type,
       immutable: immutable,
+      shift: _nextShift,
     );
   }
 
@@ -789,7 +1164,12 @@ class SymbolTable {
     }
 
     final current = table[trimmedName]!;
-    return Variable(value: current.value, type: current.type);
+    return Variable(
+      value: current.value,
+      type: current.type,
+      immutable: current.immutable,
+      shift: current.shift,
+    );
   }
 }
 
@@ -1965,6 +2345,24 @@ class Parser {
 
     return root.evaluate(SymbolTable());
   }
+
+  Node parse(String code) {
+    lexer = Lexer(code);
+    final root = parseProgram();
+
+    if (lexer.next.type != 'EOF') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_UNEXPECTED_TOKEN',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Unexpected token '${lexer.next.value}' (${lexer.next.type}) after end of expression",
+      );
+    }
+
+    return root;
+  }
 }
 
 bool _toBoolean(Variable variable) {
@@ -1985,6 +2383,120 @@ String _toStringValue(Variable variable) {
   return variable.value.toString();
 }
 
+String inferType(Node node, SymbolTable st) {
+  if (node is IntVal) {
+    return 'number';
+  }
+  if (node is FloatVal) {
+    return 'float';
+  }
+  if (node is BoolVal) {
+    return 'boolean';
+  }
+  if (node is StringVal) {
+    return 'string';
+  }
+  if (node is Read) {
+    return 'number';
+  }
+  if (node is Identifier) {
+    return st.resolve(node.value as String).type;
+  }
+  if (node is CastOp) {
+    return node.value as String;
+  }
+  if (node is UnOp) {
+    final operandType = inferType(node.children[0], st);
+    switch (node.value) {
+      case '+':
+      case '-':
+        if (operandType != 'number' && operandType != 'float') {
+          throw SemanticError("Unary '${node.value}' expects numeric operand");
+        }
+        return operandType;
+      case 'not':
+        if (operandType != 'boolean') {
+          throw SemanticError(
+            "Value of type '$operandType' cannot be used as boolean",
+          );
+        }
+        return 'boolean';
+      case '!':
+        if (operandType != 'number') {
+          throw SemanticError('Factorial is only defined for integer numbers');
+        }
+        return 'number';
+    }
+  }
+  if (node is BinOp) {
+    final leftType = inferType(node.children[0], st);
+    final rightType = inferType(node.children[1], st);
+    final op = node.value as String;
+
+    bool isNumeric(String type) => type == 'number' || type == 'float';
+
+    switch (op) {
+      case '+':
+      case '-':
+      case '*':
+      case '/':
+        if (!isNumeric(leftType) || !isNumeric(rightType)) {
+          throw SemanticError("Operator '$op' expects numeric operands");
+        }
+        return leftType == 'float' || rightType == 'float' ? 'float' : 'number';
+      case '^':
+        if (leftType != 'number' || rightType != 'number') {
+          throw SemanticError("Operator '^' expects integer numbers");
+        }
+        return 'number';
+      case 'and':
+      case 'or':
+        if (leftType != 'boolean' || rightType != 'boolean') {
+          throw SemanticError("Operator '$op' expects boolean operands");
+        }
+        return 'boolean';
+      case '==':
+        if (leftType != rightType &&
+            !(isNumeric(leftType) && isNumeric(rightType))) {
+          throw SemanticError(
+            "Operator '==' expects both sides with compatible types",
+          );
+        }
+        return 'boolean';
+      case '<':
+      case '>':
+        if (!(isNumeric(leftType) && isNumeric(rightType)) &&
+            !(leftType == 'string' && rightType == 'string')) {
+          throw SemanticError(
+            "Operator '$op' expects numeric or string operands",
+          );
+        }
+        return 'boolean';
+      case '..':
+        return 'string';
+    }
+  }
+  if (node is IfExpression) {
+    final conditionType = inferType(node.children[0], st);
+    if (conditionType != 'boolean') {
+      throw SemanticError(
+        "Value of type '$conditionType' cannot be used as boolean",
+      );
+    }
+
+    final thenType = inferType(node.children[1], st);
+    final elseType = inferType(node.children[2], st);
+    if (thenType != elseType) {
+      throw SemanticError(
+        "If expression branches must have the same type, found '$thenType' and '$elseType'",
+      );
+    }
+    return thenType;
+  }
+
+  throw SemanticError('Cannot infer type for ${node.runtimeType}');
+}
+
 void main(List<String> args) {
   if (args.isEmpty) {
     stdout.writeln(
@@ -1997,7 +2509,8 @@ void main(List<String> args) {
   final inputFile = File(input);
 
   String sourceCode;
-  if (args.length == 1 && inputFile.existsSync()) {
+  final isFileInput = args.length == 1 && inputFile.existsSync();
+  if (isFileInput) {
     sourceCode = inputFile.readAsStringSync();
   } else {
     sourceCode = input;
@@ -2007,7 +2520,19 @@ void main(List<String> args) {
   final parser = Parser();
 
   try {
-    parser.run(code);
+    if (isFileInput) {
+      final root = parser.parse(code);
+      Code.reset();
+      root.generate(SymbolTable());
+      final lastDot = inputFile.path.lastIndexOf('.');
+      final lastSeparator = inputFile.path.lastIndexOf(Platform.pathSeparator);
+      final asmPath = lastDot > lastSeparator
+          ? inputFile.path.replaceFirst(RegExp(r'\.[^.]*$'), '.asm')
+          : '${inputFile.path}.asm';
+      Code.dump(asmPath);
+    } else {
+      parser.run(code);
+    }
   } on SemanticError catch (e) {
     stderr.writeln(e.toString());
     exit(1);
