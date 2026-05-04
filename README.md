@@ -6,8 +6,6 @@ This repository is monitored by Compiler Tester for automatic compilation status
 
 ## Diagrama Sintático
 
-![Diagrama sintático](./images/sintaxe.png)
-
 ### V3.0 (Funções e Escopo)
 
 ```mermaid
