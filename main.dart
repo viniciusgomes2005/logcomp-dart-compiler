@@ -12,30 +12,27 @@ class Variable {
   dynamic value;
   final String type;
   final bool immutable;
+  final bool isFunction;
+  final bool isReturn;
   final int shift;
 
   Variable({
     required this.value,
     required this.type,
     this.immutable = false,
+    this.isFunction = false,
+    this.isReturn = false,
     this.shift = 0,
   });
 
-  Variable copy() =>
-      Variable(value: value, type: type, immutable: immutable, shift: shift);
-}
-
-class Parameter {
-  final String name;
-  final String type;
-
-  Parameter(this.name, this.type);
-}
-
-class ReturnSignal implements Exception {
-  final Variable value;
-
-  ReturnSignal(this.value);
+  Variable copy({bool? isReturn}) => Variable(
+    value: value,
+    type: type,
+    immutable: immutable,
+    isFunction: isFunction,
+    isReturn: isReturn ?? this.isReturn,
+    shift: shift,
+  );
 }
 
 class RuntimeOutput {
@@ -591,8 +588,15 @@ class Identifier extends Node {
 }
 
 class VarDec extends Node {
+  final bool isFunction;
+
   VarDec(String variableType, List<Node> children)
-    : super(variableType, children);
+    : isFunction = false,
+      super(variableType, children);
+
+  VarDec.function(String returnType, List<Node> children)
+    : isFunction = true,
+      super(returnType, children);
 
   @override
   Variable evaluate(SymbolTable st) {
@@ -608,6 +612,7 @@ class VarDec extends Node {
       identifier.value as String,
       variableType,
       initialValue: initializedValue,
+      isFunction: isFunction,
     );
 
     return initializedValue ?? st.resolve(identifier.value as String);
@@ -773,13 +778,20 @@ class Assignment extends Node {
 }
 
 class Block extends Node {
-  Block(List<Node> statements) : super('block', statements);
+  final bool createsScope;
+
+  Block(List<Node> statements, {this.createsScope = false})
+    : super('block', statements);
 
   @override
   Variable evaluate(SymbolTable st) {
+    final scope = createsScope ? st.createChild() : st;
     var result = Variable(value: 0, type: 'number');
     for (final stmt in children) {
-      result = stmt.evaluate(st);
+      result = stmt.evaluate(scope);
+      if (result.isReturn) {
+        return result;
+      }
     }
     return result;
   }
@@ -805,11 +817,19 @@ class If extends Node {
   Variable evaluate(SymbolTable st) {
     final conditionValue = children[0].evaluate(st);
     if (_toBoolean(conditionValue)) {
-      return children[1].evaluate(st);
+      final result = children[1].evaluate(st);
+      if (result.isReturn) {
+        return result;
+      }
+      return result;
     }
 
     if (children.length == 3) {
-      return children[2].evaluate(st);
+      final result = children[2].evaluate(st);
+      if (result.isReturn) {
+        return result;
+      }
+      return result;
     }
 
     return Variable(value: 0, type: 'number');
@@ -850,6 +870,9 @@ class While extends Node {
     var result = Variable(value: 0, type: 'number');
     while (_toBoolean(children[0].evaluate(st))) {
       result = children[1].evaluate(st);
+      if (result.isReturn) {
+        return result;
+      }
     }
     return result;
   }
@@ -912,18 +935,20 @@ class IfExpression extends Node {
   }
 }
 
-class FunctionDec extends Node {
+class FuncDec extends Node {
   final String name;
-  final List<Parameter> parameters;
+  final List<VarDec> parameters;
   final String? returnType;
 
-  FunctionDec(this.name, this.parameters, this.returnType, Node body)
-    : super('function', [body]);
+  FuncDec(this.name, this.parameters, this.returnType, Node body)
+    : super(returnType ?? 'void', [Identifier(name), ...parameters, body]);
+
+  Node get body => children.last;
 
   @override
   Variable evaluate(SymbolTable st) {
     st.defineFunction(name, this);
-    return Variable(value: 0, type: 'number');
+    return Variable(value: this, type: returnType ?? 'void', isFunction: true);
   }
 
   @override
@@ -932,11 +957,10 @@ class FunctionDec extends Node {
   }
 }
 
-class FunctionCall extends Node {
+class FuncCall extends Node {
   final String name;
 
-  FunctionCall(this.name, List<Node> arguments)
-    : super('function_call', arguments);
+  FuncCall(this.name, List<Node> arguments) : super('function_call', arguments);
 
   @override
   Variable evaluate(SymbolTable st) {
@@ -953,32 +977,36 @@ class FunctionCall extends Node {
       evaluatedArgs.add(argument.evaluate(st));
     }
 
-    final functionScope = st.createChild();
+    final functionScope = st.root.createChild();
     for (var i = 0; i < function.parameters.length; i++) {
       final parameter = function.parameters[i];
       final argument = evaluatedArgs[i];
-      if (parameter.type != argument.type) {
+      final parameterName =
+          (parameter.children[0] as Identifier).value as String;
+      final parameterType = parameter.value as String;
+      if (parameterType != argument.type) {
         throw SemanticError(
-          "Type mismatch: expected '${parameter.type}', found '${argument.type}'",
+          "Type mismatch for argument '${parameterName}' in function '$name': expected '$parameterType', found '${argument.type}'",
         );
       }
       functionScope.createVariable(
-        parameter.name,
-        parameter.type,
+        parameterName,
+        parameterType,
         initialValue: argument,
       );
     }
 
-    try {
-      function.children[0].evaluate(functionScope);
-    } on ReturnSignal catch (signal) {
-      if (function.returnType != null &&
-          function.returnType != signal.value.type) {
+    final result = function.body.evaluate(functionScope);
+    if (result.isReturn) {
+      if (function.returnType == null) {
+        throw SemanticError("Function '$name' cannot return a value");
+      }
+      if (function.returnType != result.type) {
         throw SemanticError(
-          "Type mismatch: expected '${function.returnType}', found '${signal.value.type}'",
+          "Type mismatch in return of function '$name': expected '${function.returnType}', found '${result.type}'",
         );
       }
-      return signal.value;
+      return result.copy(isReturn: false);
     }
 
     if (function.returnType != null) {
@@ -1003,7 +1031,7 @@ class Return extends Node {
   @override
   Variable evaluate(SymbolTable st) {
     final result = children[0].evaluate(st);
-    throw ReturnSignal(result);
+    return result.copy(isReturn: true);
   }
 
   @override
@@ -1041,6 +1069,9 @@ class For extends Node {
         Variable(value: iterator, type: 'number'),
       );
       result = children[2].evaluate(st);
+      if (result.isReturn) {
+        return result;
+      }
       iterator++;
     }
 
@@ -1183,14 +1214,16 @@ class Prepro {
 
 class SymbolTable {
   final SymbolTable? parent;
-  final Map<String, FunctionDec> functions;
+  final Map<String, FuncDec> functions;
   final Map<String, Variable> table = {};
   int _nextShift = 0;
 
-  SymbolTable({this.parent, Map<String, FunctionDec>? functions})
+  SymbolTable({this.parent, Map<String, FuncDec>? functions})
     : functions = functions ?? parent?.functions ?? {};
 
   SymbolTable createChild() => SymbolTable(parent: this, functions: functions);
+
+  SymbolTable get root => parent?.root ?? this;
 
   bool _isValidIdentifier(String name) {
     return RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*$').hasMatch(name);
@@ -1202,15 +1235,25 @@ class SymbolTable {
         (parent?.exists(trimmedName) ?? false);
   }
 
-  void defineFunction(String name, FunctionDec function) {
+  void defineFunction(String name, FuncDec function) {
     final trimmedName = name.trim();
-    if (functions.containsKey(trimmedName)) {
+    if (functions.containsKey(trimmedName) || table.containsKey(trimmedName)) {
       throw SemanticError("Function '$trimmedName' is already declared");
     }
+    createVariable(
+      trimmedName,
+      function.returnType ?? 'void',
+      initialValue: Variable(
+        value: function,
+        type: function.returnType ?? 'void',
+        isFunction: true,
+      ),
+      isFunction: true,
+    );
     functions[trimmedName] = function;
   }
 
-  FunctionDec resolveFunction(String name) {
+  FuncDec resolveFunction(String name) {
     final trimmedName = name.trim();
     final function = functions[trimmedName];
     if (function == null) {
@@ -1239,6 +1282,8 @@ class SymbolTable {
         return Variable(value: false, type: 'boolean');
       case 'string':
         return Variable(value: '', type: 'string');
+      case 'void':
+        return Variable(value: null, type: 'void');
       default:
         throw SemanticError("Unsupported type '$type'");
     }
@@ -1249,6 +1294,7 @@ class SymbolTable {
     String type, {
     Variable? initialValue,
     bool immutable = false,
+    bool isFunction = false,
   }) {
     final trimmedName = name.trim();
 
@@ -1272,6 +1318,7 @@ class SymbolTable {
         value: initialValue.value,
         type: type,
         immutable: immutable,
+        isFunction: isFunction,
         shift: _nextShift,
       );
       return;
@@ -1282,6 +1329,7 @@ class SymbolTable {
       value: defaultVar.value,
       type: type,
       immutable: immutable,
+      isFunction: isFunction,
       shift: _nextShift,
     );
   }
@@ -1307,6 +1355,10 @@ class SymbolTable {
       throw SemanticError("cannot change the value of $trimmedName");
     }
 
+    if (current.isFunction) {
+      throw SemanticError("Function '$trimmedName' cannot be assigned to");
+    }
+
     _assertTypeCompatibility(current.type, value);
     current.value = value.value;
   }
@@ -1330,6 +1382,7 @@ class SymbolTable {
       value: current.value,
       type: current.type,
       immutable: current.immutable,
+      isFunction: current.isFunction,
       shift: current.shift,
     );
   }
@@ -1535,7 +1588,7 @@ class Lexer {
       }
 
       if (identifier == 'function') {
-        next = Token('FUNCTION', identifier, start);
+        next = Token('FUNC', identifier, start);
         return;
       }
 
@@ -1692,9 +1745,126 @@ class Parser {
         lexer.selectToken();
         continue;
       }
-      statements.add(parseStatement());
+      if (lexer.next.type == 'FUNC') {
+        statements.add(parseFuncDeclaration());
+      } else {
+        statements.add(parseStatement());
+      }
     }
     return Block(statements);
+  }
+
+  FuncDec parseFuncDeclaration() {
+    if (lexer.next.type != 'FUNC') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_FUNCTION',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected 'function', found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+    lexer.selectToken();
+
+    if (lexer.next.type != 'IDEN') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_IDENTIFIER',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected function name, found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+
+    final functionName = lexer.next.value;
+    lexer.selectToken();
+
+    if (lexer.next.type != 'OPEN_PAR') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_OPEN_PAREN',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected '(' after function name '$functionName', found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+    lexer.selectToken();
+
+    final parameters = <VarDec>[];
+    if (lexer.next.type != 'CLOSE_PAR') {
+      while (true) {
+        if (lexer.next.type != 'IDEN') {
+          throw CompilerError(
+            sourceTag: 'Parser',
+            code: 'E_PAR_EXPECTED_IDENTIFIER',
+            position: lexer.next.position,
+            expression: lexer.source,
+            message:
+                "Expected parameter name, found '${lexer.next.value}' (${lexer.next.type})",
+          );
+        }
+        final parameterName = lexer.next.value;
+        lexer.selectToken();
+
+        if (lexer.next.type != 'TYPE') {
+          throw CompilerError(
+            sourceTag: 'Parser',
+            code: 'E_PAR_EXPECTED_TYPE',
+            position: lexer.next.position,
+            expression: lexer.source,
+            message:
+                "Expected type after parameter '$parameterName', found '${lexer.next.value}' (${lexer.next.type})",
+          );
+        }
+        parameters.add(VarDec(lexer.next.value, [Identifier(parameterName)]));
+        lexer.selectToken();
+
+        if (lexer.next.type != 'COMMA') {
+          break;
+        }
+        lexer.selectToken();
+      }
+    }
+
+    if (lexer.next.type != 'CLOSE_PAR') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected ')' after function parameters, found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+    lexer.selectToken();
+
+    String? returnType;
+    if (lexer.next.type == 'TYPE') {
+      returnType = lexer.next.value;
+      lexer.selectToken();
+    }
+
+    _consumeOptionalBlockStartEol();
+
+    final body = parseBlock(['CLOSE_BRA']);
+
+    if (lexer.next.type != 'CLOSE_BRA') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_END',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected 'end' to close function '$functionName', found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+    lexer.selectToken();
+    _consumeBlockTerminator('function');
+
+    return FuncDec(functionName, parameters, returnType, body);
   }
 
   Node parseBlock(List<String> stopTokens) {
@@ -1761,7 +1931,7 @@ class Parser {
     );
   }
 
-  FunctionCall _parseFunctionCallAfterName(String name) {
+  FuncCall _parseFunctionCallAfterName(String name) {
     if (lexer.next.type != 'OPEN_PAR') {
       throw CompilerError(
         sourceTag: 'Parser',
@@ -1796,7 +1966,7 @@ class Parser {
     }
     lexer.selectToken();
 
-    return FunctionCall(name, arguments);
+    return FuncCall(name, arguments);
   }
 
   Node parseBoolExpression() {
@@ -1843,107 +2013,14 @@ class Parser {
       return NoOp();
     }
 
-    if (lexer.next.type == 'FUNCTION') {
-      lexer.selectToken();
-
-      if (lexer.next.type != 'IDEN') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_IDENTIFIER',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected function name, found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-
-      final functionName = lexer.next.value;
-      lexer.selectToken();
-
-      if (lexer.next.type != 'OPEN_PAR') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_OPEN_PAREN',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected '(' after function name '$functionName', found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-      lexer.selectToken();
-
-      final parameters = <Parameter>[];
-      if (lexer.next.type != 'CLOSE_PAR') {
-        while (true) {
-          if (lexer.next.type != 'IDEN') {
-            throw CompilerError(
-              sourceTag: 'Parser',
-              code: 'E_PAR_EXPECTED_IDENTIFIER',
-              position: lexer.next.position,
-              expression: lexer.source,
-              message:
-                  "Expected parameter name, found '${lexer.next.value}' (${lexer.next.type})",
-            );
-          }
-          final parameterName = lexer.next.value;
-          lexer.selectToken();
-
-          if (lexer.next.type != 'TYPE') {
-            throw CompilerError(
-              sourceTag: 'Parser',
-              code: 'E_PAR_EXPECTED_TYPE',
-              position: lexer.next.position,
-              expression: lexer.source,
-              message:
-                  "Expected type after parameter '$parameterName', found '${lexer.next.value}' (${lexer.next.type})",
-            );
-          }
-          parameters.add(Parameter(parameterName, lexer.next.value));
-          lexer.selectToken();
-
-          if (lexer.next.type != 'COMMA') {
-            break;
-          }
-          lexer.selectToken();
-        }
-      }
-
-      if (lexer.next.type != 'CLOSE_PAR') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_CLOSE_PAREN',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected ')' after function parameters, found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-      lexer.selectToken();
-
-      String? returnType;
-      if (lexer.next.type == 'TYPE') {
-        returnType = lexer.next.value;
-        lexer.selectToken();
-      }
-
-      _consumeOptionalBlockStartEol();
-
-      final body = parseBlock(['CLOSE_BRA']);
-
-      if (lexer.next.type != 'CLOSE_BRA') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_END',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected 'end' to close function '$functionName', found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-      lexer.selectToken();
-      _consumeBlockTerminator('function');
-
-      return FunctionDec(functionName, parameters, returnType, body);
+    if (lexer.next.type == 'FUNC') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_FUNCTION_INSIDE_BLOCK',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message: 'Function declarations are only allowed at program scope',
+      );
     }
 
     if (lexer.next.type == 'RETURN') {
@@ -1956,31 +2033,26 @@ class Parser {
     if (lexer.next.type == 'IF') {
       lexer.selectToken();
 
-      if (lexer.next.type != 'OPEN_PAR') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_OPEN_PAREN',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected '(' after if, found '${lexer.next.value}' (${lexer.next.type})",
-        );
+      final hasParenthesizedCondition = lexer.next.type == 'OPEN_PAR';
+      if (hasParenthesizedCondition) {
+        lexer.selectToken();
       }
-      lexer.selectToken();
 
       final condition = parseBoolExpression();
 
-      if (lexer.next.type != 'CLOSE_PAR') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_CLOSE_PAREN',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected ')' after if condition, found '${lexer.next.value}' (${lexer.next.type})",
-        );
+      if (hasParenthesizedCondition) {
+        if (lexer.next.type != 'CLOSE_PAR') {
+          throw CompilerError(
+            sourceTag: 'Parser',
+            code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+            position: lexer.next.position,
+            expression: lexer.source,
+            message:
+                "Expected ')' after if condition, found '${lexer.next.value}' (${lexer.next.type})",
+          );
+        }
+        lexer.selectToken();
       }
-      lexer.selectToken();
 
       if (lexer.next.type != 'OPEN_IF_BRA') {
         throw CompilerError(
@@ -2047,31 +2119,26 @@ class Parser {
     if (lexer.next.type == 'WHILE') {
       lexer.selectToken();
 
-      if (lexer.next.type != 'OPEN_PAR') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_OPEN_PAREN',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected '(' after while, found '${lexer.next.value}' (${lexer.next.type})",
-        );
+      final hasParenthesizedCondition = lexer.next.type == 'OPEN_PAR';
+      if (hasParenthesizedCondition) {
+        lexer.selectToken();
       }
-      lexer.selectToken();
 
       final condition = parseBoolExpression();
 
-      if (lexer.next.type != 'CLOSE_PAR') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_CLOSE_PAREN',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected ')' after while condition, found '${lexer.next.value}' (${lexer.next.type})",
-        );
+      if (hasParenthesizedCondition) {
+        if (lexer.next.type != 'CLOSE_PAR') {
+          throw CompilerError(
+            sourceTag: 'Parser',
+            code: 'E_PAR_EXPECTED_CLOSE_PAREN',
+            position: lexer.next.position,
+            expression: lexer.source,
+            message:
+                "Expected ')' after while condition, found '${lexer.next.value}' (${lexer.next.type})",
+          );
+        }
+        lexer.selectToken();
       }
-      lexer.selectToken();
 
       if (lexer.next.type != 'OPEN_BRA') {
         throw CompilerError(
@@ -2205,7 +2272,7 @@ class Parser {
 
       _consumeBlockTerminator('do');
 
-      return body;
+      return Block(body.children, createsScope: true);
     }
 
     if (lexer.next.type == 'VAR') {
@@ -2699,6 +2766,13 @@ String inferType(Node node, SymbolTable st) {
   if (node is Identifier) {
     return st.resolve(node.value as String).type;
   }
+  if (node is FuncCall) {
+    final function = st.resolveFunction(node.name);
+    if (function.returnType == null) {
+      throw SemanticError("Function '${node.name}' does not return a value");
+    }
+    return function.returnType!;
+  }
   if (node is CastOp) {
     return node.value as String;
   }
@@ -2836,7 +2910,7 @@ void main(List<String> args) {
       final hasRead = containsNode(root, (node) => node is Read);
       final hasFunctions = containsNode(
         root,
-        (node) => node is FunctionDec || node is FunctionCall || node is Return,
+        (node) => node is FuncDec || node is FuncCall || node is Return,
       );
       List<String> capturedOutput = [];
 
