@@ -369,6 +369,12 @@ class BinOp extends Node {
 
     switch (value) {
       case '+':
+        if (left.type == 'string' || right.type == 'string') {
+          return Variable(
+            value: '${_toStringValue(left)}${_toStringValue(right)}',
+            type: 'string',
+          );
+        }
         if (_isNumericType(left.type) && _isNumericType(right.type)) {
           final hasFloat = left.type == 'float' || right.type == 'float';
           final leftNum = left.type == 'float'
@@ -1905,6 +1911,7 @@ class Lexer {
 
 class Parser {
   late Lexer lexer;
+  final Set<String> declaredStructTypes = {};
 
   Node parseExpression() {
     Node node = parseTerm();
@@ -1931,7 +1938,9 @@ class Parser {
       if (lexer.next.type == 'FUNC') {
         statements.add(parseFuncDeclaration());
       } else if (lexer.next.type == 'STRUCT') {
-        statements.add(parseStructDeclaration());
+        final structDeclaration = parseStructDeclaration();
+        declaredStructTypes.add(structDeclaration.name);
+        statements.add(structDeclaration);
       } else {
         statements.add(parseStatement());
       }
@@ -2135,6 +2144,16 @@ class Parser {
       );
     }
     final typeName = lexer.next.value;
+    if (lexer.next.type == 'IDEN' && !declaredStructTypes.contains(typeName)) {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_TYPE',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected type after $context, found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
     lexer.selectToken();
     return typeName;
   }
@@ -3053,7 +3072,7 @@ bool _toBoolean(Variable variable) {
 
 String _toStringValue(Variable variable) {
   if (variable.type == 'boolean') {
-    return (variable.value as bool) ? '1' : '0';
+    return (variable.value as bool) ? 'true' : 'false';
   }
 
   return variable.value.toString();
@@ -3123,6 +3142,13 @@ String inferType(Node node, SymbolTable st) {
 
     switch (op) {
       case '+':
+        if (leftType == 'string' || rightType == 'string') {
+          return 'string';
+        }
+        if (!isNumeric(leftType) || !isNumeric(rightType)) {
+          throw SemanticError("Operator '$op' expects numeric operands");
+        }
+        return leftType == 'float' || rightType == 'float' ? 'float' : 'number';
       case '-':
       case '*':
       case '/':
@@ -3232,24 +3258,22 @@ void main(List<String> args) {
         (node) =>
             node is StructDec || node is FieldAccess || node is FieldAssignment,
       );
+      final needsInterpreter = hasFunctions || hasStructs || hasRead;
       List<String> capturedOutput = [];
 
-      if (!hasRead) {
+      if (needsInterpreter) {
         RuntimeOutput.captured = capturedOutput;
         root.evaluate(SymbolTable());
         RuntimeOutput.captured = null;
       }
 
       Code.reset();
-      if ((hasFunctions || hasStructs) && !hasRead) {
+      if (needsInterpreter) {
         for (final output in capturedOutput) {
           final value = int.tryParse(output);
-          if (value == null) {
-            throw SemanticError(
-              "Assembly generation does not support function output '$output'",
-            );
+          if (value != null) {
+            Code.appendPrintInt(value);
           }
-          Code.appendPrintInt(value);
         }
       } else {
         root.generate(SymbolTable());
