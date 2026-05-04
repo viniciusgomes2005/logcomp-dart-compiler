@@ -85,37 +85,3 @@ DIGIT = "0" | "..." | "9";
 LETTER = "a" | "..." | "z" | "A" | "..." | "Z" ;
 BOOLEAN = "true" | "false" ;
 ```
-
-## Base de Testes (Roteiro 7)
-
-- `teste_roteiro7_ok.lua`: usa `string`, `number`, `boolean`, `float`, concatenação, `if`, `while` e cast.
-- `teste_roteiro7_legacy.lua`: garante funcionamento de estruturas antigas (if/while/and/or/not/aritmética).
-- `teste_roteiro7_tipo_incorreto.lua`: valida erro de tipo.
-- `teste_roteiro7_if_string.lua`: valida erro de uso de string como condição de `if`.
-- `teste_roteiro7_while_string.lua`: valida erro de uso de string como condição de `while`.
-
-## Base de Testes (Funções e Escopo)
-
-- `teste_roteiro8_funcoes_ok.lua`: valida declaração de função, chamada, retorno e sombra de variável em `do/end`.
-- `teste_roteiro8_recursao.lua`: valida função recursiva (`fat(5)` imprime `120`).
-- `teste_roteiro8_erro_argumentos.lua`: valida chamada com quantidade incorreta de argumentos.
-- `teste_roteiro8_erro_tipo_argumento.lua`: valida tipo incorreto em argumento.
-- `teste_roteiro8_erro_funcao_inexistente.lua`: valida chamada de função não declarada.
-- `teste_roteiro8_erro_escopo.lua`: valida uso de variável fora do escopo.
-- `teste_roteiro8_struct_ok.lua`: valida declaração, instanciação e acesso/atribuição de campo em `struct`.
-
-## Sugestões de Testes Adicionais
-
-- Função com retorno declarado que não executa `return`.
-- Função sem tipo de retorno tentando retornar valor.
-- Função declarada dentro de outra função ou bloco, que deve gerar erro de parser.
-- Variável local com mesmo nome de variável global e atribuições em ambos os escopos.
-- `return` dentro de `if` e `while`, para validar propagação do retorno pelo bloco.
-
-## Questionário
-
-Classes poderiam reutilizar a ideia de `struct` como molde, adicionando uma tabela de métodos por tipo e uma referência opcional para superclasse. A instanciação criaria um objeto com uma `SymbolTable` própria para atributos; chamadas como `obj.metodo()` passariam o próprio objeto como contexto implícito (`self`) e o verificador garantiria existência e tipos de atributos/métodos.
-
-Partial application pode ser implementada permitindo que `FuncCall` receba menos argumentos que a assinatura e retorne um valor de tipo função contendo a referência da função original mais os argumentos já vinculados. Uma chamada posterior completaria a lista, validaria tipos restantes e executaria normalmente.
-
-Otimizações simples durante a análise sintática incluem constant folding (`2 + 3` vira `5`), eliminação de operações neutras (`x + 0`, `x * 1`), simplificação booleana (`true and x` vira `x`) e remoção de blocos inalcançáveis após `return`. Peephole optimization costuma atuar em uma janela pequena de instruções já geradas, por exemplo removendo `push` seguido de `pop` equivalente ou trocando sequências redundantes por uma instrução mais direta.
