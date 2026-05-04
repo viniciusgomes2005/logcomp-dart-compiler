@@ -777,6 +777,25 @@ class Assignment extends Node {
   }
 }
 
+class FieldAssignment extends Node {
+  final List<String> fields;
+
+  FieldAssignment(String baseName, this.fields, Node expression)
+    : super(baseName, [expression]);
+
+  @override
+  Variable evaluate(SymbolTable st) {
+    final resolved = children[0].evaluate(st);
+    st.setField(value as String, fields, resolved);
+    return resolved;
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    throw SemanticError('Assembly generation does not support structs');
+  }
+}
+
 class Block extends Node {
   final bool createsScope;
 
@@ -1025,6 +1044,43 @@ class FuncCall extends Node {
   }
 }
 
+class StructDec extends Node {
+  final String name;
+  final List<VarDec> fields;
+
+  StructDec(this.name, this.fields)
+    : super('struct', [Identifier(name), ...fields]);
+
+  @override
+  Variable evaluate(SymbolTable st) {
+    st.defineStruct(name, this);
+    return Variable(value: this, type: 'struct', isFunction: true);
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    Code.append('  ; struct $name omitted from basic assembly generation');
+  }
+}
+
+class FieldAccess extends Node {
+  FieldAccess(String baseName, List<String> fields)
+    : super(baseName, fields.map(Identifier.new).toList());
+
+  List<String> get fieldNames =>
+      children.map((child) => child.value as String).toList();
+
+  @override
+  Variable evaluate(SymbolTable st) {
+    return st.resolveField(value as String, fieldNames);
+  }
+
+  @override
+  void generate(SymbolTable st) {
+    throw SemanticError('Assembly generation does not support structs');
+  }
+}
+
 class Return extends Node {
   Return(Node expression) : super('return', [expression]);
 
@@ -1215,13 +1271,19 @@ class Prepro {
 class SymbolTable {
   final SymbolTable? parent;
   final Map<String, FuncDec> functions;
+  final Map<String, StructDec> structs;
   final Map<String, Variable> table = {};
   int _nextShift = 0;
 
-  SymbolTable({this.parent, Map<String, FuncDec>? functions})
-    : functions = functions ?? parent?.functions ?? {};
+  SymbolTable({
+    this.parent,
+    Map<String, FuncDec>? functions,
+    Map<String, StructDec>? structs,
+  }) : functions = functions ?? parent?.functions ?? {},
+       structs = structs ?? parent?.structs ?? {};
 
-  SymbolTable createChild() => SymbolTable(parent: this, functions: functions);
+  SymbolTable createChild() =>
+      SymbolTable(parent: this, functions: functions, structs: structs);
 
   SymbolTable get root => parent?.root ?? this;
 
@@ -1262,6 +1324,25 @@ class SymbolTable {
     return function;
   }
 
+  void defineStruct(String name, StructDec struct) {
+    final trimmedName = name.trim();
+    if (structs.containsKey(trimmedName) ||
+        functions.containsKey(trimmedName) ||
+        table.containsKey(trimmedName)) {
+      throw SemanticError("Struct '$trimmedName' is already declared");
+    }
+    structs[trimmedName] = struct;
+  }
+
+  StructDec resolveStruct(String name) {
+    final trimmedName = name.trim();
+    final struct = structs[trimmedName];
+    if (struct == null) {
+      throw SemanticError("Struct '$trimmedName' is not declared");
+    }
+    return struct;
+  }
+
   void _assertTypeCompatibility(String expectedType, Variable value) {
     if (expectedType == value.type) {
       return;
@@ -1285,8 +1366,32 @@ class SymbolTable {
       case 'void':
         return Variable(value: null, type: 'void');
       default:
+        if (structs.containsKey(type)) {
+          return Variable(value: _instantiateStruct(type), type: type);
+        }
         throw SemanticError("Unsupported type '$type'");
     }
+  }
+
+  Map<String, Variable> _instantiateStruct(String type) {
+    final struct = resolveStruct(type);
+    final values = <String, Variable>{};
+
+    for (final field in struct.fields) {
+      final identifier = field.children[0] as Identifier;
+      final fieldName = identifier.value as String;
+      final fieldType = field.value as String;
+
+      if (values.containsKey(fieldName)) {
+        throw SemanticError(
+          "Field '$fieldName' is already declared in struct '$type'",
+        );
+      }
+
+      values[fieldName] = _defaultValueForType(fieldType);
+    }
+
+    return values;
   }
 
   void createVariable(
@@ -1385,6 +1490,76 @@ class SymbolTable {
       isFunction: current.isFunction,
       shift: current.shift,
     );
+  }
+
+  Variable resolveField(String baseName, List<String> fields) {
+    if (fields.isEmpty) {
+      return resolve(baseName);
+    }
+
+    Variable current = resolve(baseName);
+    for (final fieldName in fields) {
+      if (!structs.containsKey(current.type)) {
+        throw SemanticError(
+          "Value '$baseName' of type '${current.type}' has no fields",
+        );
+      }
+
+      final fieldMap = current.value as Map<String, Variable>;
+      final field = fieldMap[fieldName];
+      if (field == null) {
+        throw SemanticError(
+          "Struct '${current.type}' has no field '$fieldName'",
+        );
+      }
+      current = field;
+    }
+
+    return current.copy();
+  }
+
+  void setField(String baseName, List<String> fields, Variable value) {
+    if (fields.isEmpty) {
+      setVariable(baseName, value);
+      return;
+    }
+
+    Variable current = _resolveMutable(baseName);
+    for (var i = 0; i < fields.length; i++) {
+      final fieldName = fields[i];
+      if (!structs.containsKey(current.type)) {
+        throw SemanticError(
+          "Value '$baseName' of type '${current.type}' has no fields",
+        );
+      }
+
+      final fieldMap = current.value as Map<String, Variable>;
+      final field = fieldMap[fieldName];
+      if (field == null) {
+        throw SemanticError(
+          "Struct '${current.type}' has no field '$fieldName'",
+        );
+      }
+
+      if (i == fields.length - 1) {
+        _assertTypeCompatibility(field.type, value);
+        field.value = value.value;
+        return;
+      }
+
+      current = field;
+    }
+  }
+
+  Variable _resolveMutable(String name) {
+    final trimmedName = name.trim();
+    if (table.containsKey(trimmedName)) {
+      return table[trimmedName]!;
+    }
+    if (parent != null && parent!.exists(trimmedName)) {
+      return parent!._resolveMutable(trimmedName);
+    }
+    throw SemanticError("Variable '$trimmedName' is not declared");
   }
 }
 
@@ -1487,6 +1662,9 @@ class Lexer {
         position += 2;
         return;
       }
+      next = Token('DOT', currentChar, position);
+      position++;
+      return;
     }
 
     if (currentChar == '(') {
@@ -1589,6 +1767,11 @@ class Lexer {
 
       if (identifier == 'function') {
         next = Token('FUNC', identifier, start);
+        return;
+      }
+
+      if (identifier == 'struct') {
+        next = Token('STRUCT', identifier, start);
         return;
       }
 
@@ -1747,6 +1930,8 @@ class Parser {
       }
       if (lexer.next.type == 'FUNC') {
         statements.add(parseFuncDeclaration());
+      } else if (lexer.next.type == 'STRUCT') {
+        statements.add(parseStructDeclaration());
       } else {
         statements.add(parseStatement());
       }
@@ -1809,18 +1994,8 @@ class Parser {
         final parameterName = lexer.next.value;
         lexer.selectToken();
 
-        if (lexer.next.type != 'TYPE') {
-          throw CompilerError(
-            sourceTag: 'Parser',
-            code: 'E_PAR_EXPECTED_TYPE',
-            position: lexer.next.position,
-            expression: lexer.source,
-            message:
-                "Expected type after parameter '$parameterName', found '${lexer.next.value}' (${lexer.next.type})",
-          );
-        }
-        parameters.add(VarDec(lexer.next.value, [Identifier(parameterName)]));
-        lexer.selectToken();
+        final parameterType = _parseTypeName("parameter '$parameterName'");
+        parameters.add(VarDec(parameterType, [Identifier(parameterName)]));
 
         if (lexer.next.type != 'COMMA') {
           break;
@@ -1842,7 +2017,7 @@ class Parser {
     lexer.selectToken();
 
     String? returnType;
-    if (lexer.next.type == 'TYPE') {
+    if (lexer.next.type == 'TYPE' || lexer.next.type == 'IDEN') {
       returnType = lexer.next.value;
       lexer.selectToken();
     }
@@ -1865,6 +2040,103 @@ class Parser {
     _consumeBlockTerminator('function');
 
     return FuncDec(functionName, parameters, returnType, body);
+  }
+
+  StructDec parseStructDeclaration() {
+    lexer.selectToken();
+
+    if (lexer.next.type != 'IDEN') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_IDENTIFIER',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected struct name, found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+
+    final structName = lexer.next.value;
+    lexer.selectToken();
+    _consumeOptionalBlockStartEol();
+
+    final fields = <VarDec>[];
+    while (lexer.next.type != 'EOF' && lexer.next.type != 'CLOSE_BRA') {
+      if (lexer.next.type == 'EOL') {
+        lexer.selectToken();
+        continue;
+      }
+      if (lexer.next.type != 'VAR') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_STRUCT_FIELD',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected local field declaration in struct '$structName', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      lexer.selectToken();
+
+      if (lexer.next.type != 'IDEN') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_IDENTIFIER',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected field name, found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+
+      final fieldName = lexer.next.value;
+      lexer.selectToken();
+      final fieldType = _parseTypeName("field '$fieldName'");
+
+      if (lexer.next.type == 'ASSIGN') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_STRUCT_FIELD_INITIALIZER',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message: 'Struct fields cannot be initialized in the declaration',
+        );
+      }
+
+      _consumeStatementTerminator('struct field declaration');
+      fields.add(VarDec(fieldType, [Identifier(fieldName)]));
+    }
+
+    if (lexer.next.type != 'CLOSE_BRA') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_END',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected 'end' to close struct '$structName', found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+    lexer.selectToken();
+    _consumeBlockTerminator('struct');
+
+    return StructDec(structName, fields);
+  }
+
+  String _parseTypeName(String context) {
+    if (lexer.next.type != 'TYPE' && lexer.next.type != 'IDEN') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_EXPECTED_TYPE',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message:
+            "Expected type after $context, found '${lexer.next.value}' (${lexer.next.type})",
+      );
+    }
+    final typeName = lexer.next.value;
+    lexer.selectToken();
+    return typeName;
   }
 
   Node parseBlock(List<String> stopTokens) {
@@ -1969,6 +2241,26 @@ class Parser {
     return FuncCall(name, arguments);
   }
 
+  List<String> _parseFieldNamesAfterDot(String baseName) {
+    final fields = <String>[];
+    while (lexer.next.type == 'DOT') {
+      lexer.selectToken();
+      if (lexer.next.type != 'IDEN') {
+        throw CompilerError(
+          sourceTag: 'Parser',
+          code: 'E_PAR_EXPECTED_FIELD',
+          position: lexer.next.position,
+          expression: lexer.source,
+          message:
+              "Expected field name after '$baseName.', found '${lexer.next.value}' (${lexer.next.type})",
+        );
+      }
+      fields.add(lexer.next.value);
+      lexer.selectToken();
+    }
+    return fields;
+  }
+
   Node parseBoolExpression() {
     Node node = parseBoolTerm();
 
@@ -2020,6 +2312,16 @@ class Parser {
         position: lexer.next.position,
         expression: lexer.source,
         message: 'Function declarations are only allowed at program scope',
+      );
+    }
+
+    if (lexer.next.type == 'STRUCT') {
+      throw CompilerError(
+        sourceTag: 'Parser',
+        code: 'E_PAR_STRUCT_INSIDE_BLOCK',
+        position: lexer.next.position,
+        expression: lexer.source,
+        message: 'Struct declarations are only allowed at program scope',
       );
     }
 
@@ -2292,19 +2594,7 @@ class Parser {
       final identName = lexer.next.value;
       lexer.selectToken();
 
-      if (lexer.next.type != 'TYPE') {
-        throw CompilerError(
-          sourceTag: 'Parser',
-          code: 'E_PAR_EXPECTED_TYPE',
-          position: lexer.next.position,
-          expression: lexer.source,
-          message:
-              "Expected type after identifier '$identName', found '${lexer.next.value}' (${lexer.next.type})",
-        );
-      }
-
-      final varType = lexer.next.value;
-      lexer.selectToken();
+      final varType = _parseTypeName("identifier '$identName'");
 
       Node? expr;
       if (lexer.next.type == 'ASSIGN') {
@@ -2390,6 +2680,25 @@ class Parser {
         final call = _parseFunctionCallAfterName(identName);
         _consumeStatementTerminator('function call');
         return call;
+      }
+
+      if (lexer.next.type == 'DOT') {
+        final fields = _parseFieldNamesAfterDot(identName);
+        if (lexer.next.type != 'ASSIGN') {
+          throw CompilerError(
+            sourceTag: 'Parser',
+            code: 'E_PAR_EXPECTED_ASSIGN',
+            position: lexer.next.position,
+            expression: lexer.source,
+            message:
+                "Expected '=' after field access '$identName.${fields.join('.')}', found '${lexer.next.value}' (${lexer.next.type})",
+          );
+        }
+        lexer.selectToken();
+
+        final expr = parseBoolExpression();
+        _consumeStatementTerminator('field assignment');
+        return FieldAssignment(identName, fields, expr);
       }
 
       if (lexer.next.type != 'ASSIGN') {
@@ -2662,6 +2971,9 @@ class Parser {
       if (lexer.next.type == 'OPEN_PAR') {
         return _parseFunctionCallAfterName(identName);
       }
+      if (lexer.next.type == 'DOT') {
+        return FieldAccess(identName, _parseFieldNamesAfterDot(identName));
+      }
       return Identifier(identName);
     }
 
@@ -2765,6 +3077,9 @@ String inferType(Node node, SymbolTable st) {
   }
   if (node is Identifier) {
     return st.resolve(node.value as String).type;
+  }
+  if (node is FieldAccess) {
+    return st.resolveField(node.value as String, node.fieldNames).type;
   }
   if (node is FuncCall) {
     final function = st.resolveFunction(node.name);
@@ -2912,6 +3227,11 @@ void main(List<String> args) {
         root,
         (node) => node is FuncDec || node is FuncCall || node is Return,
       );
+      final hasStructs = containsNode(
+        root,
+        (node) =>
+            node is StructDec || node is FieldAccess || node is FieldAssignment,
+      );
       List<String> capturedOutput = [];
 
       if (!hasRead) {
@@ -2921,7 +3241,7 @@ void main(List<String> args) {
       }
 
       Code.reset();
-      if (hasFunctions && !hasRead) {
+      if ((hasFunctions || hasStructs) && !hasRead) {
         for (final output in capturedOutput) {
           final value = int.tryParse(output);
           if (value == null) {

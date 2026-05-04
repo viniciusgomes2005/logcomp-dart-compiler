@@ -10,8 +10,9 @@ This repository is monitored by Compiler Tester for automatic compilation status
 
 ```mermaid
 flowchart TD
-  PROGRAM["PROGRAM = { FUNCDEC | STATEMENT }"]
+  PROGRAM["PROGRAM = { FUNCDEC | STRUCTDEC | STATEMENT }"]
   FUNCDEC["function IDENTIFIER(PARAMS) [TYPE] EOL {STATEMENT} end"]
+  STRUCTDEC["struct IDENTIFIER EOL {local IDENTIFIER TYPE} end"]
   PARAMS["PARAMS = ε | IDENTIFIER TYPE {, IDENTIFIER TYPE}"]
   STATEMENT["STATEMENT = VARDEC | ASSIGN | FUNCCALL | PRINT | RETURN | IF | WHILE | BLOCK | ε"]
   VARDEC["local IDENTIFIER TYPE [= BOOLEXPRESSION]"]
@@ -28,10 +29,11 @@ flowchart TD
   REXP["RELEXPRESSION = EXPRESSION {(== | < | >) EXPRESSION}"]
   EXP["EXPRESSION = TERM {(+ | -) TERM}"]
   TERM["TERM = FACTOR {(* | /) FACTOR}"]
-  FACTOR["FACTOR = NUMBER | STRING | BOOLEAN | IDENTIFIER [ARGUMENTS] | (+|-|not) FACTOR | (BOOLEXPRESSION) | read()"]
-  TYPE["TYPE = number | string | boolean"]
+  FACTOR["FACTOR = NUMBER | STRING | BOOLEAN | IDENTIFIER [.FIELD* | ARGUMENTS] | (+|-|not) FACTOR | (BOOLEXPRESSION) | read()"]
+  TYPE["TYPE = number | string | boolean | IDENTIFIER"]
 
   PROGRAM --> FUNCDEC
+  PROGRAM --> STRUCTDEC
   PROGRAM --> STATEMENT
   FUNCDEC --> PARAMS
   FUNCDEC --> STATEMENT
@@ -60,11 +62,12 @@ flowchart TD
 
 ## EBNF:
 ```ebnf
-PROGRAM = { FUNCDEC | STATEMENT } ;
+PROGRAM = { FUNCDEC | STRUCTDEC | STATEMENT } ;
 FUNCDEC = "function", IDENTIFIER, "(", ( | IDENTIFIER, TYPE, { ",", IDENTIFIER, TYPE } ), ")", ( TYPE | ), "\n", { STATEMENT }, "end" ;
+STRUCTDEC = "struct", IDENTIFIER, "\n", { "local", IDENTIFIER, TYPE, "\n" }, "end" ;
 BLOCK = "do", {STATEMENT, }, "end" ;
 STATEMENT = ( | "local", IDENTIFIER, TYPE, ( | "=", BOOLEXPRESSION ) | ( IDENTIFIER, ( "=",
-BOOLEXPRESSION | "(", ( BOOLEXPRESSION, { ",", BOOLEXPRESSION } | ), ")" ) ) | ( "print", "(",
+BOOLEXPRESSION | ".", IDENTIFIER, { ".", IDENTIFIER }, "=", BOOLEXPRESSION | "(", ( BOOLEXPRESSION, { ",", BOOLEXPRESSION } | ), ")" ) ) | ( "print", "(",
 BOOLEXPRESSION, ")" ) | "return", BOOLEXPRESSION | ), "\n" | ( "if", BOOLEXPRESSION, "then",
 { STATEMENT }, ( | "else", { STATEMENT } ) ), "end" | ( "while", BOOLEXPRESSION, "do",
 { STATEMENT }, "end" ) | BLOCK ;
@@ -73,8 +76,8 @@ BOOLTERM = RELEXPRESSION, { "and", RELEXPRESSION } ;
 RELEXPRESSION = EXPRESSION, { ( "==" | "<" | ">" ), EXPRESSION };
 EXPRESSION = TERM, { ("+" | "-"), TERM } ;
 TERM = FACTOR, { ("*" | "/"), FACTOR } ;
-FACTOR = NUMBER | STRING | BOOLEAN | IDENTIFIER, ( "(", ( BOOLEXPRESSION, { ",", BOOLEXPRESSION } | ), ")" | ) | ( "+" | "-" | "not" ), FACTOR | "(", BOOLEXPRESSION, ")" | "read", "(", ")" ;
-TYPE = "number" | "string" | "boolean" ;
+FACTOR = NUMBER | STRING | BOOLEAN | IDENTIFIER, ( ".", IDENTIFIER, { ".", IDENTIFIER } | "(", ( BOOLEXPRESSION, { ",", BOOLEXPRESSION } | ), ")" | ) | ( "+" | "-" | "not" ), FACTOR | "(", BOOLEXPRESSION, ")" | "read", "(", ")" ;
+TYPE = "number" | "string" | "boolean" | IDENTIFIER ;
 NUMBER = DIGIT, {DIGIT} ;
 IDENTIFIER = LETTER, {LETTER | DIGIT | "_"} ;
 STRING = '"..."' ;
@@ -99,6 +102,7 @@ BOOLEAN = "true" | "false" ;
 - `teste_roteiro8_erro_tipo_argumento.lua`: valida tipo incorreto em argumento.
 - `teste_roteiro8_erro_funcao_inexistente.lua`: valida chamada de função não declarada.
 - `teste_roteiro8_erro_escopo.lua`: valida uso de variável fora do escopo.
+- `teste_roteiro8_struct_ok.lua`: valida declaração, instanciação e acesso/atribuição de campo em `struct`.
 
 ## Sugestões de Testes Adicionais
 
